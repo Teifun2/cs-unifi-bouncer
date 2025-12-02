@@ -1,0 +1,26 @@
+version: "3.8"
+services:
+  bouncer-unifi:
+    build: .
+    container_name: bouncer-unifi-test
+    environment:
+      # CrowdSec settings
+      CROWDSEC_BOUNCER_API_KEY: "${CROWDSEC_BOUNCER_API_KEY}"
+      CROWDSEC_URL: "${CROWDSEC_URL:-http://crowdsec:8080/}"
+
+      # UniFi settings
+      UNIFI_HOST: "${UNIFI_HOST}"
+      UNIFI_API_KEY: "${UNIFI_API_KEY:-}"
+      UNIFI_USER: "${UNIFI_USER:-}"
+      UNIFI_PASS: "${UNIFI_PASS:-}"
+      UNIFI_SKIP_TLS_VERIFY: "${UNIFI_SKIP_TLS_VERIFY:-true}"
+
+      # Log cleanup settings (to prevent MongoDB CPU overload)
+      UNIFI_LOG_CLEANUP: "${UNIFI_LOG_CLEANUP:-false}"
+      UNIFI_LOG_CLEANUP_USER: "${UNIFI_LOG_CLEANUP_USER:-root}"
+      UNIFI_LOG_CLEANUP_PASSWORD: "${UNIFI_LOG_CLEANUP_PASSWORD:-}"
+      UNIFI_LOG_CLEANUP_MINUTES: "${UNIFI_LOG_CLEANUP_MINUTES:-30}"
+
+      # Debug logging
+      LOG_LEVEL: "${LOG_LEVEL:-debug}"
+    restart: "no"
