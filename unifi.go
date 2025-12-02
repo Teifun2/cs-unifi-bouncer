@@ -310,6 +310,16 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			delete(mal.firewallGroups[ipv6], groupName)
 		}
 	}
+
+	// Clean up audit log entries to prevent MongoDB CPU overload
+	// This is critical for UDM/UCG devices where the admin_activity_log
+	// can grow very large and cause the control plane to become unresponsive
+	if unifiLogCleanup {
+		log.Debug().Msg("Running audit log cleanup...")
+		if err := cleanupBouncerAuditEntries(unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword, unifiLogCleanupMinutes); err != nil {
+			log.Warn().Err(err).Msg("Audit log cleanup failed (non-fatal)")
+		}
+	}
 }
 
 func (mal *unifiAddrList) add(decision *models.Decision) {
