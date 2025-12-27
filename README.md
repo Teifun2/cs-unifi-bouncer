@@ -84,7 +84,7 @@ The bouncer configuration is made via environment variables:
 | `UNIFI_LOGGING`               | Generate Syslog entries when the firewall rules are matched                                                                               | `false`                 |    ❌    |
 | `UNIFI_ZONE_SRC`              | Space separated list of Source Zones for Firewall Policy in Zone Based mode                                                               | `External`              |    ❌    |
 | `UNIFI_ZONE_DST`              | Space separated list of Destination Zones for Firewall Policy in Zone Based mode                                                          | `Internal Vpn Hotspot`  |    ❌    |
-| `UNIFI_POLICY_REORDERING`     | Enable automatic reordering of firewall policies to ensure cs-unifi-bouncer policies are positioned after default policies                | `true`                  |    ❌    |
+| `UNIFI_POLICY_REORDERING`     | Enable automatic reordering of firewall policies to ensure cs-unifi-bouncer policies have highest priority (before custom and default policies) | `true`                  |    ❌    |
 
 # Contribution
 
