@@ -445,14 +445,14 @@ func (mal *unifiAddrList) reorderFirewallPolicies(ctx context.Context) {
 			beforePredefinedIds := make([]string, 0)
 			afterPredefinedIds := make([]string, 0)
 
-			// Extract IDs from pre policies
-			for _, policy := range prePolicies {
+			// Extract IDs from bouncer policies FIRST (highest priority - deny rules)
+			for _, policy := range newPolicies {
 				beforePredefinedIds = append(beforePredefinedIds, policy.ID)
 			}
 
-			// Extract IDs from new policies (go first in after list)
-			for _, policy := range newPolicies {
-				afterPredefinedIds = append(afterPredefinedIds, policy.ID)
+			// Extract IDs from existing custom policies (after bouncer rules)
+			for _, policy := range prePolicies {
+				beforePredefinedIds = append(beforePredefinedIds, policy.ID)
 			}
 
 			// Extract IDs from remaining after policies
