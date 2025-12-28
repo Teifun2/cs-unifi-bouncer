@@ -104,7 +104,11 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 		if strings.Contains(rule.Name, "cs-unifi-bouncer") {
 			ipv6 := strings.Contains(rule.Name, "ipv6")
 
-			mal.firewallRule[ipv6][rule.Name] = FirewallRuleCache{id: rule.ID, groupId: rule.SrcFirewallGroupIDs[0]}
+			groupId := ""
+			if len(rule.SrcFirewallGroupIDs) > 0 {
+				groupId = rule.SrcFirewallGroupIDs[0]
+			}
+			mal.firewallRule[ipv6][rule.Name] = FirewallRuleCache{id: rule.ID, groupId: groupId}
 		}
 	}
 
