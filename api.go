@@ -169,7 +169,15 @@ func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, grou
 			group = newGroup
 		}
 		log.Info().Msg("Firewall group posted")
-		mal.firewallGroups[ipv6][group.Name] = group.ID
+		// Cache the group with its members for future comparison
+		memberMap := make(map[string]bool)
+		for _, member := range members {
+			memberMap[member] = true
+		}
+		mal.firewallGroups[ipv6][group.Name] = FirewallGroupCache{
+			id:      group.ID,
+			members: memberMap,
+		}
 		return group.ID
 	}
 }

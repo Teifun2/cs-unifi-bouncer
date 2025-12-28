@@ -26,10 +26,15 @@ type ZoneCache struct {
 	id string
 }
 
+type FirewallGroupCache struct {
+	id      string
+	members map[string]bool
+}
+
 type unifiAddrList struct {
 	c                      unifi.Client
 	blockedAddresses       map[bool]map[string]bool
-	firewallGroups         map[bool]map[string]string
+	firewallGroups         map[bool]map[string]FirewallGroupCache
 	firewallRule           map[bool]map[string]FirewallRuleCache
 	firewallZonePolicy     map[bool]map[string]FirewallZonePolicyCache
 	modified               bool
@@ -74,8 +79,8 @@ func main() {
 	inactivityTimer := time.NewTimer(10 * time.Second)
 	defer inactivityTimer.Stop()
 
-	// At startup, we need to call all update functions to ensure the firewall is in sync with the decisions
-	mal.modified = true
+	// modified flag is set by decisionProcess when new/deleted decisions arrive
+	// No need to force it true - the cache now persists existing state from UniFi
 
 	g.Go(func() error {
 		log.Printf("Processing new and deleted decisions . . .")
