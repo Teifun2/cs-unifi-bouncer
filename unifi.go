@@ -162,6 +162,15 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 		return
 	}
 
+	// Run initial audit log cleanup before processing to prevent MongoDB overload
+	// This clears any excessive log entries before we start making changes
+	if unifiLogCleanup {
+		log.Debug().Msg("Running pre-update audit log cleanup...")
+		if err := cleanupBouncerAuditEntries(unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword, unifiLogCleanupMinutes); err != nil {
+			log.Warn().Err(err).Msg("Pre-update audit log cleanup failed (non-fatal)")
+		}
+	}
+
 	ipVersionString := "ipv4"
 	if ipv6 {
 		ipVersionString = "ipv6"
