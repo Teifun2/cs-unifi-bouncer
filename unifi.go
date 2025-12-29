@@ -46,6 +46,14 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 	mal.blockedAddresses[true] = make(map[string]bool)
 	mal.blockedAddresses[false] = make(map[string]bool)
 
+	mal.addressToGroup = make(map[bool]map[string]int)
+	mal.addressToGroup[true] = make(map[string]int)
+	mal.addressToGroup[false] = make(map[string]int)
+
+	mal.modifiedGroups = make(map[bool]map[int]bool)
+	mal.modifiedGroups[true] = make(map[int]bool)
+	mal.modifiedGroups[false] = make(map[int]bool)
+
 	mal.firewallGroups = make(map[bool]map[string]FirewallGroupCache)
 	mal.firewallGroups[true] = make(map[string]FirewallGroupCache)
 	mal.firewallGroups[false] = make(map[string]FirewallGroupCache)
@@ -81,11 +89,21 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 		if strings.Contains(group.Name, "cs-unifi-bouncer") {
 			ipv6 := strings.Contains(group.Name, "ipv6")
 
+			// Extract group index from name (e.g., "cs-unifi-bouncer-ipv4-0" -> 0)
+			parts := strings.Split(group.Name, "-")
+			groupIndex := 0
+			if len(parts) >= 5 {
+				if idx, err := strconv.Atoi(parts[4]); err == nil {
+					groupIndex = idx
+				}
+			}
+
 			// Cache group with its members
 			memberMap := make(map[string]bool)
 			for _, member := range group.GroupMembers {
 				memberMap[member] = true
 				mal.blockedAddresses[ipv6][member] = true
+				mal.addressToGroup[ipv6][member] = groupIndex
 			}
 			mal.firewallGroups[ipv6][group.Name] = FirewallGroupCache{
 				id:      group.ID,
@@ -208,10 +226,19 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 
 	// Calculate the number of groups needed
 	numGroups := (len(addresses) + maxGroupSize - 1) / maxGroupSize
-	log.Info().Msgf("Number of %s groups needed: %d", ipVersionString, numGroups)
+	modifiedCount := len(mal.modifiedGroups[ipv6])
+	log.Info().Msgf("Number of %s groups needed: %d, modified groups: %d", ipVersionString, numGroups, modifiedCount)
 
 	// Split addresses into groups of maxGroupSize
 	for i := 0; i < len(addresses); i += maxGroupSize {
+		groupIndex := i / maxGroupSize
+
+		// Skip groups that haven't been modified (unless it's initial run with no tracking yet)
+		if modifiedCount > 0 && !mal.modifiedGroups[ipv6][groupIndex] {
+			log.Debug().Msgf("Skipping unmodified group %d", groupIndex)
+			continue
+		}
+
 		end := i + maxGroupSize
 		if end > len(addresses) {
 			end = len(addresses)
@@ -219,7 +246,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 		group := addresses[i:end]
 
 		// Get the group ID if it exists and check if members changed
-		groupName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, i/maxGroupSize)
+		groupName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, groupIndex)
 		groupID := ""
 		groupChanged := true
 		if cache, exists := mal.firewallGroups[ipv6][groupName]; exists {
@@ -243,7 +270,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			for _, zoneSrc := range unifiZoneSrc {
 				for _, zoneDst := range unifiZoneDst {
 					// Get the policy ID if it exists
-					policyName := fmt.Sprintf("cs-unifi-bouncer-%s-%s->%s-%d", ipVersionString, zoneSrc, zoneDst, i/maxGroupSize)
+					policyName := fmt.Sprintf("cs-unifi-bouncer-%s-%s->%s-%d", ipVersionString, zoneSrc, zoneDst, groupIndex)
 					policyId := ""
 					cachedGroupId := ""
 					if policyCache, exists := mal.firewallZonePolicy[ipv6][policyName]; exists {
@@ -266,7 +293,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 
 		} else {
 			// Get the rule ID if it exists
-			ruleName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, i/maxGroupSize)
+			ruleName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, groupIndex)
 			ruleId := ""
 			cachedGroupId := ""
 			if ruleCache, exists := mal.firewallRule[ipv6][ruleName]; exists {
@@ -276,7 +303,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 
 			// Post the firewall rule, skip if the group ID is the same as the cached one (no changes)
 			if groupID != "" && groupID != cachedGroupId {
-				mal.postFirewallRule(ctx, i/maxGroupSize, ruleId, ruleName, ipv6, groupID)
+				mal.postFirewallRule(ctx, groupIndex, ruleId, ruleName, ipv6, groupID)
 			}
 		}
 	}
@@ -367,6 +394,14 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			log.Warn().Err(err).Msg("Audit log cleanup failed (non-fatal)")
 		}
 	}
+
+	// Clear modified groups tracking and rebuild addressToGroup mapping
+	mal.modifiedGroups[ipv6] = make(map[int]bool)
+	mal.addressToGroup[ipv6] = make(map[string]int)
+	addressList := getKeys(mal.blockedAddresses[ipv6])
+	for idx, addr := range addressList {
+		mal.addressToGroup[ipv6][addr] = idx / maxGroupSize
+	}
 }
 
 func (mal *unifiAddrList) add(decision *models.Decision) {
@@ -390,6 +425,10 @@ func (mal *unifiAddrList) add(decision *models.Decision) {
 	} else {
 		mal.modified = true
 		mal.blockedAddresses[ipv6][*decision.Value] = true
+		// Calculate which group this new IP will belong to and mark it modified
+		groupIndex := len(mal.blockedAddresses[ipv6]) / maxGroupSize
+		mal.modifiedGroups[ipv6][groupIndex] = true
+		mal.addressToGroup[ipv6][*decision.Value] = groupIndex
 	}
 }
 
@@ -411,6 +450,16 @@ func (mal *unifiAddrList) remove(decision *models.Decision) {
 
 	if mal.blockedAddresses[ipv6][*decision.Value] {
 		mal.modified = true
+		// Mark the group this IP belongs to as modified
+		if groupIndex, exists := mal.addressToGroup[ipv6][*decision.Value]; exists {
+			mal.modifiedGroups[ipv6][groupIndex] = true
+			// When removing, all subsequent groups may shift, so mark them too
+			numGroups := (len(mal.blockedAddresses[ipv6]) + maxGroupSize - 1) / maxGroupSize
+			for i := groupIndex; i < numGroups; i++ {
+				mal.modifiedGroups[ipv6][i] = true
+			}
+			delete(mal.addressToGroup[ipv6], *decision.Value)
+		}
 		delete(mal.blockedAddresses[ipv6], *decision.Value)
 	} else {
 		log.Warn().Msgf("%s not found in local cache", *decision.Value)

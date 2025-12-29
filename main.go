@@ -34,6 +34,8 @@ type FirewallGroupCache struct {
 type unifiAddrList struct {
 	c                      unifi.Client
 	blockedAddresses       map[bool]map[string]bool
+	addressToGroup         map[bool]map[string]int    // tracks which group each IP belongs to
+	modifiedGroups         map[bool]map[int]bool      // tracks which groups need updating
 	firewallGroups         map[bool]map[string]FirewallGroupCache
 	firewallRule           map[bool]map[string]FirewallRuleCache
 	firewallZonePolicy     map[bool]map[string]FirewallZonePolicyCache
