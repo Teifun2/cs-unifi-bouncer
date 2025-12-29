@@ -75,7 +75,7 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 		if newFirewallRule != nil {
 			firewallRule = newFirewallRule
 		}
-		log.Info().Msg("Firewall rule posted")
+		log.Info().Str("rule", ruleName).Msg("Firewall rule posted")
 		mal.firewallRule[ipv6][firewallRule.Name] = FirewallRuleCache{id: firewallRule.ID, groupId: groupId}
 	}
 }
@@ -134,7 +134,7 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 		if newFirewallZonePolicy != nil {
 			firewallZonePolicy = newFirewallZonePolicy
 		}
-		log.Info().Msg("Firewall policy posted")
+		log.Info().Str("policy", policyName).Msg("Firewall policy posted")
 		var firewallZonePolicyCache = FirewallZonePolicyCache{id: firewallZonePolicy.ID, groupId: groupId}
 		mal.firewallZonePolicy[ipv6][firewallZonePolicy.Name] = firewallZonePolicyCache
 	}
@@ -183,7 +183,7 @@ func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, grou
 		if newGroup != nil {
 			group = newGroup
 		}
-		log.Info().Msg("Firewall group posted")
+		log.Info().Str("group", groupName).Int("members", len(members)).Msg("Firewall group posted")
 		// Cache the group with its members for future comparison
 		memberMap := make(map[string]bool)
 		for _, member := range members {
