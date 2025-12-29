@@ -295,6 +295,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			continue
 		}
 		// Delete the old firewall rule
+		waitForRateLimit()
 		err = mal.c.DeleteFirewallRule(ctx, unifiSite, ruleCache.id)
 		if err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall rule: %s", ruleName)
@@ -324,6 +325,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			continue
 		}
 		// Delete the old firewall policy
+		waitForRateLimit()
 		err = mal.c.DeleteFirewallZonePolicy(ctx, unifiSite, policyCache.id)
 		if err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall policy: %s", policyName)
@@ -346,6 +348,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			continue
 		}
 		// Delete the old firewall group
+		waitForRateLimit()
 		err = mal.c.DeleteFirewallGroup(ctx, unifiSite, groupCache.id)
 		if err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall group: %s", groupName)
@@ -523,6 +526,7 @@ func (mal *unifiAddrList) reorderFirewallPolicies(ctx context.Context) {
 			}
 
 			// Execute the reorder
+			waitForRateLimit()
 			_, err := mal.c.ReorderFirewallPolicies(ctx, unifiSite, reorderUpdate)
 			if err != nil {
 				log.Error().Err(err).

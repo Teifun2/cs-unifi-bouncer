@@ -2,10 +2,19 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/filipowm/go-unifi/unifi"
 	"github.com/rs/zerolog/log"
 )
+
+// apiRateLimiter provides simple rate limiting for UniFi API calls
+var apiRateLimiter = time.NewTicker(100 * time.Millisecond)
+
+// waitForRateLimit waits for the rate limiter before making an API call
+func waitForRateLimit() {
+	<-apiRateLimiter.C
+}
 
 // postFirewallRule creates or updates a firewall rule in the UniFi controller.
 // The rule will drop all traffic from the specified source firewall group IDs.
@@ -21,6 +30,7 @@ import (
 // updates an existing rule or creates a new one in the UniFi controller. If the
 // operation fails, it logs a fatal error. Otherwise, it logs an informational message.
 func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID string, ruleName string, ipv6 bool, groupId string) {
+	waitForRateLimit()
 	ruleset := "WAN_IN"
 	if ipv6 {
 		ruleset = "WANv6_IN"
@@ -59,7 +69,8 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 	}
 
 	if err != nil {
-		log.Fatal().Err(err).Msgf("Failed to post firewall rule: %v", firewallRule)
+		log.Error().Err(err).Msgf("Failed to post firewall rule: %v", firewallRule)
+		return
 	} else {
 		if newFirewallRule != nil {
 			firewallRule = newFirewallRule
@@ -70,6 +81,7 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 }
 
 func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, policyName string, ipv6 bool, groupId string, srcZone string, dstZone string) {
+	waitForRateLimit()
 	ipVersion := "IPV4"
 	if ipv6 {
 		ipVersion = "IPV6"
@@ -116,7 +128,8 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 	}
 
 	if err != nil {
-		log.Fatal().Err(err).Msgf("Failed to post firewall policy: %v", firewallZonePolicy)
+		log.Error().Err(err).Msgf("Failed to post firewall policy: %v", firewallZonePolicy)
+		return
 	} else {
 		if newFirewallZonePolicy != nil {
 			firewallZonePolicy = newFirewallZonePolicy
@@ -140,6 +153,7 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 //
 // The function logs a fatal error if the operation fails, otherwise it logs a success message.
 func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, groupName string, ipv6 bool, members []string) string {
+	waitForRateLimit()
 	groupType := "address-group"
 	if ipv6 {
 		groupType = "ipv6-address-group"
@@ -162,9 +176,10 @@ func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, grou
 	}
 
 	if err != nil {
-		log.Fatal().Err(err).Msgf("Failed to post firewall group: %v", group)
+		log.Error().Err(err).Msgf("Failed to post firewall group: %v", group)
 		return ""
-	} else {
+	}
+	{
 		if newGroup != nil {
 			group = newGroup
 		}
