@@ -45,7 +45,7 @@ jobs:
 
       - name: Build and Push to GHCR with ko
         env:
-          KO_DOCKER_REPO: ghcr.io/teifun2
+          KO_DOCKER_REPO: ghcr.io/shockstruck
           TAGS: ${{ steps.meta.outputs.tags }}
           LABELS: ${{ steps.meta.outputs.labels }}
           VERSION: ${{ steps.meta.outputs.version }}
