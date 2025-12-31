@@ -8,10 +8,10 @@ A CrowdSec Bouncer for Unifi appliance
 
 ![GitHub](https://img.shields.io/github/license/teifun2/cs-unifi-bouncer)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/teifun2/cs-unifi-bouncer)
-[![Go Report Card](https://goreportcard.com/badge/github.com/teifun2/cs-unifi-bouncer)](https://goreportcard.com/report/github.com/teifun2/cs-unifi-bouncer)
-[![Maintainability](https://qlty.sh/badges/c1f1c4cf-fabf-45bb-a5c2-4ad04ec6d4ac/maintainability.svg)](https://qlty.sh/gh/Teifun2/projects/cs-unifi-bouncer)
-[![ci](https://github.com/teifun2/cs-unifi-bouncer/actions/workflows/container-release.yaml/badge.svg)](https://github.com/teifun2/cs-unifi-bouncer/actions/workflows/container-release.yaml)
-![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/teifun2/cs-unifi-bouncer)
+[![Go Report Card](https://goreportcard.com/badge/github.com/shockstruck/cs-unifi-bouncer)](https://goreportcard.com/report/github.com/shockstruck/cs-unifi-bouncer)
+[![Maintainability](https://qlty.sh/badges/c1f1c4cf-fabf-45bb-a5c2-4ad04ec6d4ac/maintainability.svg)](https://qlty.sh/gh/shockstruck/projects/cs-unifi-bouncer)
+[![ci](https://github.com/shockstruck/cs-unifi-bouncer/actions/workflows/container-release.yaml/badge.svg)](https://github.com/teifun2/cs-unifi-bouncer/actions/workflows/container-release.yaml)
+![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/shockstruck/cs-unifi-bouncer)
 
 > [!WARNING]
 > This was tested with the following [devices](#tested-devices). Further testing is needed
