@@ -211,7 +211,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 	// This clears any excessive log entries before we start making changes
 	if unifiLogCleanup {
 		log.Debug().Msg("Running pre-update audit log cleanup...")
-		if err := cleanupBouncerAuditEntries(unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword, unifiLogCleanupMinutes); err != nil {
+		if err := cleanupBouncerAuditEntries(mal.c, unifiSite, unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword, unifiLogCleanupMinutes); err != nil {
 			log.Warn().Err(err).Msg("Pre-update audit log cleanup failed (non-fatal)")
 		}
 	}
@@ -390,7 +390,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 	// can grow very large and cause the control plane to become unresponsive
 	if unifiLogCleanup {
 		log.Debug().Msg("Running audit log cleanup...")
-		if err := cleanupBouncerAuditEntries(unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword, unifiLogCleanupMinutes); err != nil {
+		if err := cleanupBouncerAuditEntries(mal.c, unifiSite, unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword, unifiLogCleanupMinutes); err != nil {
 			log.Warn().Err(err).Msg("Audit log cleanup failed (non-fatal)")
 		}
 	}

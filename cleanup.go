@@ -2,14 +2,74 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/filipowm/go-unifi/unifi"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
 )
+
+// SSHConfigStatus holds the SSH configuration state from the UniFi controller
+type SSHConfigStatus struct {
+	Enabled             bool
+	PasswordAuthEnabled bool
+	Username            string
+}
+
+// checkSSHConfiguration queries the UniFi API to verify SSH settings
+// and provides detailed diagnostics before attempting SSH connection.
+// Returns the SSH configuration status and any error encountered.
+func checkSSHConfiguration(c unifi.Client, site string) (*SSHConfigStatus, error) {
+	ctx := context.Background()
+
+	mgmt, err := c.GetSettingMgmt(ctx, site)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query SSH settings via API: %w", err)
+	}
+
+	status := &SSHConfigStatus{
+		Enabled:             mgmt.XSshEnabled,
+		PasswordAuthEnabled: mgmt.XSshAuthPasswordEnabled,
+		Username:            mgmt.XSshUsername,
+	}
+
+	log.Debug().
+		Bool("ssh_enabled", status.Enabled).
+		Bool("password_auth_enabled", status.PasswordAuthEnabled).
+		Str("configured_username", status.Username).
+		Msg("Retrieved SSH configuration from UniFi API")
+
+	return status, nil
+}
+
+// validateSSHConfiguration checks if the SSH configuration is suitable for cleanup
+// and returns a descriptive error if not. This helps users diagnose issues.
+func validateSSHConfiguration(status *SSHConfigStatus, sshUser string) error {
+	if !status.Enabled {
+		return fmt.Errorf("SSH is disabled on the UniFi device. " +
+			"Enable it in Settings -> System -> Advanced -> SSH")
+	}
+
+	if !status.PasswordAuthEnabled {
+		return fmt.Errorf("SSH password authentication is disabled. " +
+			"Enable 'Device SSH Authentication' in Settings -> System -> Advanced, " +
+			"or consider adding public key support to cs-unifi-bouncer")
+	}
+
+	// Warn if username doesn't match (but don't fail - user might know what they're doing)
+	if status.Username != "" && status.Username != sshUser {
+		log.Warn().
+			Str("configured_user", sshUser).
+			Str("device_user", status.Username).
+			Msg("SSH username mismatch: UNIFI_LOG_CLEANUP_USER differs from device SSH username")
+	}
+
+	return nil
+}
 
 // cleanupBouncerAuditEntries connects to the UniFi Controller via SSH,
 // and runs a Mongo update that rewrites large admin_activity_log entries
@@ -21,7 +81,24 @@ import (
 //
 // The cleanup replaces detailed IP lists with a simple "Updated from bouncer"
 // message, preserving the audit trail while eliminating the performance impact.
-func cleanupBouncerAuditEntries(unifiHost, sshUser, sshPassword string, lookbackMinutes int) error {
+//
+// The function performs a pre-flight check via the UniFi API to verify SSH
+// is enabled and password authentication is allowed, providing clear error
+// messages if the configuration is incorrect.
+func cleanupBouncerAuditEntries(c unifi.Client, site, unifiHost, sshUser, sshPassword string, lookbackMinutes int) error {
+	// Pre-flight check: verify SSH configuration via UniFi API
+	sshStatus, err := checkSSHConfiguration(c, site)
+	if err != nil {
+		// API check failed - log warning but continue to attempt SSH anyway
+		// The actual SSH connection will provide the definitive result
+		log.Warn().Err(err).Msg("Could not verify SSH configuration via API, attempting connection anyway")
+	} else {
+		// Validate SSH settings and provide actionable error messages
+		if err := validateSSHConfiguration(sshStatus, sshUser); err != nil {
+			return fmt.Errorf("SSH configuration check failed: %w", err)
+		}
+	}
+
 	host, err := extractHost(unifiHost)
 	if err != nil {
 		return fmt.Errorf("failed to extract host from URL: %w", err)
