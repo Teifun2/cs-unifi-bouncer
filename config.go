@@ -27,6 +27,11 @@ var (
 	unifiZoneSrc           []string
 	unifiZoneDst           []string
 	unifiPolicyReordering  bool
+	// Audit log cleanup settings (to prevent MongoDB CPU overload)
+	unifiLogCleanup         bool
+	unifiLogCleanupUser     string
+	unifiLogCleanupPassword string
+	unifiLogCleanupMinutes  int
 )
 
 func initConfig() {
@@ -65,6 +70,15 @@ func initConfig() {
 	viper.SetDefault("unifi_zone_dst", "Internal Vpn Hotspot")
 	viper.BindEnv("unifi_policy_reordering")
 	viper.SetDefault("unifi_policy_reordering", "false")
+	// Audit log cleanup settings - helps prevent MongoDB CPU overload on UDM devices
+	// When enabled, connects via SSH after each update to clean up verbose audit log entries
+	viper.BindEnv("unifi_log_cleanup")
+	viper.SetDefault("unifi_log_cleanup", "false")
+	viper.BindEnv("unifi_log_cleanup_user")
+	viper.SetDefault("unifi_log_cleanup_user", "root")
+	viper.BindEnv("unifi_log_cleanup_password")
+	viper.BindEnv("unifi_log_cleanup_minutes")
+	viper.SetDefault("unifi_log_cleanup_minutes", 30)
 
 	logLevel = viper.GetString("log_level")
 	level, err := zerolog.ParseLevel(logLevel)
@@ -113,4 +127,13 @@ func initConfig() {
 	unifiZoneDst = viper.GetStringSlice("unifi_zone_dst")
 
 	unifiPolicyReordering = viper.GetBool("unifi_policy_reordering")
+
+	unifiLogCleanup = viper.GetBool("unifi_log_cleanup")
+	unifiLogCleanupUser = viper.GetString("unifi_log_cleanup_user")
+	unifiLogCleanupPassword = viper.GetString("unifi_log_cleanup_password")
+	unifiLogCleanupMinutes = viper.GetInt("unifi_log_cleanup_minutes")
+
+	if unifiLogCleanup && unifiLogCleanupPassword == "" {
+		log.Fatal().Msg("UNIFI_LOG_CLEANUP_PASSWORD is required when UNIFI_LOG_CLEANUP is enabled")
+	}
 }
