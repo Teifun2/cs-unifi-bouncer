@@ -64,26 +64,27 @@ Generate a bouncer API key following [CrowdSec documentation](https://doc.crowds
 
 The bouncer configuration is made via environment variables:
 
-| Name                          | Description                                                                                                                               | Default                 | Required |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | :------: |
-| `CROWDSEC_BOUNCER_API_KEY`    | CrowdSec bouncer API key required to be authorized to request local API                                                                   | `none`                  |    ✅    |
-| `CROWDSEC_URL`                | Host and port of CrowdSec agent                                                                                                           | `http://crowdsec:8080/` |    ✅    |
-| `CROWDSEC_ORIGINS`            | Space separated list of CrowdSec origins to filter from LAPI (EG: "crowdsec cscli")                                                       | `none`                  |    ❌    |
-| `CROWDSEC_UPDATE_INTERVAL`    | Interval Frequency Querying the Crowdsec API for changes to the blocklist.                                                                | `5s`                    |    ❌    |
-| `LOG_LEVEL`                   | Minimum log level for bouncer in [zerolog levels](https://pkg.go.dev/github.com/rs/zerolog#readme-leveled-logging)                        | `1`                     |    ❌    |
-| `UNIFI_HOST`                  | Unifi appliance address                                                                                                                   | `none`                  |    ✅    |
-| `UNIFI_API_KEY`               | Unifi appliance API key                                                                                                                   | `none`                  | ✅ / ❌  |
-| `UNIFI_USER`                  | Unifi appliance username                                                                                                                  | `none`                  | ✅ / ❌  |
-| `UNIFI_PASS`                  | Unifi appliance password                                                                                                                  | `none`                  | ✅ / ❌  |
-| `UNIFI_IPV6`                  | Enable / Disable IPv6 support                                                                                                             | `true`                  |    ❌    |
-| `UNIFI_SITE`                  | Unifi Site Configuration in case of multiple sites                                                                                        | `default`               |    ❌    |
-| `UNIFI_MAX_GROUP_SIZE`        | UDM has a max IP Group size of 10'000 This might be different for other appliances                                                        | `10000`                 |    ❌    |
-| `UNIFI_IPV4_START_RULE_INDEX` | If you have other custom Rules defined in your Firewall this might need to be changed to prevent collisions (NOT FOR ZONE BASED FIREWALL) | `22000`                 |    ❌    |
-| `UNIFI_IPV6_START_RULE_INDEX` | If you have other custom Rules defined in your Firewall this might need to be changed to prevent collisions (NOT FOR ZONE BASED FIREWALL) | `27000`                 |    ❌    |
-| `UNIFI_SKIP_TLS_VERIFY`       | Skips Certificate check for unifi controllers without proper SSL Certificate                                                              | `false`                 |    ❌    |
-| `UNIFI_LOGGING`               | Generate Syslog entries when the firewall rules are matched                                                                               | `false`                 |    ❌    |
-| `UNIFI_ZONE_SRC`              | Space separated list of Source Zones for Firewall Policy in Zone Based mode                                                               | `External`              |    ❌    |
-| `UNIFI_ZONE_DST`              | Space separated list of Destination Zones for Firewall Policy in Zone Based mode                                                          | `Internal Vpn Hotspot`  |    ❌    |
+| Name                          | Description                                                                                                                                     | Default                 | Required |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | :------: |
+| `CROWDSEC_BOUNCER_API_KEY`    | CrowdSec bouncer API key required to be authorized to request local API                                                                         | `none`                  |    ✅    |
+| `CROWDSEC_URL`                | Host and port of CrowdSec agent                                                                                                                 | `http://crowdsec:8080/` |    ✅    |
+| `CROWDSEC_ORIGINS`            | Space separated list of CrowdSec origins to filter from LAPI (EG: "crowdsec cscli")                                                             | `none`                  |    ❌    |
+| `CROWDSEC_UPDATE_INTERVAL`    | Interval Frequency Querying the Crowdsec API for changes to the blocklist.                                                                      | `5s`                    |    ❌    |
+| `CROWDSEC_SKIP_TLS_VERIFY`    | Skips Certificate check for CrowdSec LAPI without proper SSL Certificate                                                                        | `false`                 |    ❌    |
+| `LOG_LEVEL`                   | Minimum log level for bouncer in [zerolog levels](https://pkg.go.dev/github.com/rs/zerolog#readme-leveled-logging)                              | `1`                     |    ❌    |
+| `UNIFI_HOST`                  | Unifi appliance address                                                                                                                         | `none`                  |    ✅    |
+| `UNIFI_API_KEY`               | Unifi appliance API key                                                                                                                         | `none`                  | ✅ / ❌  |
+| `UNIFI_USER`                  | Unifi appliance username                                                                                                                        | `none`                  | ✅ / ❌  |
+| `UNIFI_PASS`                  | Unifi appliance password                                                                                                                        | `none`                  | ✅ / ❌  |
+| `UNIFI_IPV6`                  | Enable / Disable IPv6 support                                                                                                                   | `true`                  |    ❌    |
+| `UNIFI_SITE`                  | Unifi Site Configuration in case of multiple sites                                                                                              | `default`               |    ❌    |
+| `UNIFI_MAX_GROUP_SIZE`        | UDM has a max IP Group size of 10'000 This might be different for other appliances                                                              | `10000`                 |    ❌    |
+| `UNIFI_IPV4_START_RULE_INDEX` | If you have other custom Rules defined in your Firewall this might need to be changed to prevent collisions (NOT FOR ZONE BASED FIREWALL)       | `22000`                 |    ❌    |
+| `UNIFI_IPV6_START_RULE_INDEX` | If you have other custom Rules defined in your Firewall this might need to be changed to prevent collisions (NOT FOR ZONE BASED FIREWALL)       | `27000`                 |    ❌    |
+| `UNIFI_SKIP_TLS_VERIFY`       | Skips Certificate check for unifi controllers without proper SSL Certificate                                                                    | `false`                 |    ❌    |
+| `UNIFI_LOGGING`               | Generate Syslog entries when the firewall rules are matched                                                                                     | `false`                 |    ❌    |
+| `UNIFI_ZONE_SRC`              | Space separated list of Source Zones for Firewall Policy in Zone Based mode                                                                     | `External`              |    ❌    |
+| `UNIFI_ZONE_DST`              | Space separated list of Destination Zones for Firewall Policy in Zone Based mode                                                                | `Internal Vpn Hotspot`  |    ❌    |
 | `UNIFI_POLICY_REORDERING`     | Enable automatic reordering of firewall policies to ensure cs-unifi-bouncer policies have highest priority (before custom and default policies) | `true`                  |    ❌    |
 
 # Contribution
