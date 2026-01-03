@@ -85,7 +85,12 @@ func main() {
 			case <-ctx.Done():
 				log.Error().Msg("terminating bouncer process")
 				return nil
-			case decisions := <-bouncer.Stream:
+			case decisions, ok := <-bouncer.Stream:
+				if !ok {
+					// Stream was closed, likely due to CrowdSec API authentication failure
+					log.Error().Msg("CrowdSec API connection failed (check API key and URL)")
+					return nil
+				}
 				// Reset the inactivity timer
 				inactivityTimer.Reset(time.Second)
 
