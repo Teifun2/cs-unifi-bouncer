@@ -27,15 +27,15 @@ type ZoneCache struct {
 }
 
 type unifiAddrList struct {
-	c                      unifi.Client
-	blockedAddresses       map[bool]map[string]bool
-	firewallGroups         map[bool]map[string]string
-	firewallRule           map[bool]map[string]FirewallRuleCache
-	firewallZonePolicy     map[bool]map[string]FirewallZonePolicyCache
-	modified               bool
-	isZoneBased            bool
-	firewallZones          map[string]ZoneCache
-	initialReorderingDone  bool
+	c                     unifi.Client
+	blockedAddresses      map[bool]map[string]bool
+	firewallGroups        map[bool]map[string]string
+	firewallRule          map[bool]map[string]FirewallRuleCache
+	firewallZonePolicy    map[bool]map[string]FirewallZonePolicyCache
+	modified              bool
+	isZoneBased           bool
+	firewallZones         map[string]ZoneCache
+	initialReorderingDone bool
 }
 
 // This variable is set by the build process with ldflags
@@ -48,11 +48,12 @@ func main() {
 	initConfig()
 
 	bouncer := &csbouncer.StreamBouncer{
-		APIKey:         crowdsecBouncerAPIKey,
-		APIUrl:         crowdsecBouncerURL,
-		TickerInterval: crowdsecUpdateInterval,
-		Origins:        crowdsecOrigins,
-		UserAgent:      fmt.Sprintf("cs-unifi-bouncer/%s", version),
+		APIKey:             crowdsecBouncerAPIKey,
+		APIUrl:             crowdsecBouncerURL,
+		TickerInterval:     crowdsecUpdateInterval,
+		Origins:            crowdsecOrigins,
+		UserAgent:          fmt.Sprintf("cs-unifi-bouncer/%s", version),
+		InsecureSkipVerify: &crowdsecSkipTLSVerify,
 	}
 	if err := bouncer.Init(); err != nil {
 		log.Fatal().Err(err).Msg("Bouncer init failed")
