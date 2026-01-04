@@ -32,7 +32,7 @@ var (
 
 func initConfig() {
 	viper.BindEnv("log_level")
-	viper.SetDefault("log_level", "1")
+	viper.SetDefault("log_level", "info")
 	viper.BindEnv("crowdsec_bouncer_api_key")
 	viper.BindEnv("crowdsec_url")
 	viper.SetDefault("crowdsec_url", "http://crowdsec:8080/")
