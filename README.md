@@ -105,9 +105,9 @@ Some users have reported that the UniFi control plane becomes slow or unresponsi
 
 **Solution A: One-time MongoDB collection capping (no SSH credentials required)**
 
-This is a one-time manual fix that caps the `admin_activity_log` collection to 10 MB. Once applied, MongoDB automatically discards older entries to stay within the limit, permanently preventing the collection from growing out of control. No bouncer configuration changes are needed.
+This fix caps the `admin_activity_log` collection to 10 MB. Once applied, MongoDB automatically discards older entries to stay within the limit, preventing the collection from growing out of control. No bouncer configuration changes are needed.
 
-SSH into your UniFi device once and run:
+SSH into your UniFi device and run:
 
 ```shell
 # Drop the collection so it can be recreated as a capped collection
@@ -118,6 +118,8 @@ mongo ace --port 27117 --quiet --eval 'db.runCommand({ convertToCapped: "admin_a
 ```
 
 > **Note:** The `drop` command is optional — `convertToCapped` works on an existing collection too and is sufficient on its own if you prefer not to lose existing log entries.
+
+> **⚠️ Important:** UniFi firmware/software updates may recreate the `admin_activity_log` collection without the capped configuration, causing the issue to reappear. If you notice the slowdown returning after an update, re-run the `convertToCapped` command above. If you prefer a fully automated fix that survives updates, use Solution B instead.
 
 **Solution B: Automatic periodic cleanup via SSH (bouncer-managed)**
 
