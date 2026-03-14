@@ -14,7 +14,7 @@ A CrowdSec Bouncer for Unifi appliance
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/teifun2/cs-unifi-bouncer)
 
 > [!WARNING]
-> This was tested with the following [devices](#tested-devices). Further testing is needed
+> **MongoDB CPU Overload Issue**: Some users experience high CPU usage and slow UniFi control plane performance when running this bouncer due to excessive audit logging. See the [MongoDB CPU Overload](#mongodb-cpu-overload) troubleshooting section for details and the workaround solution.
 
 # Description
 
