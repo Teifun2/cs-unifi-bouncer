@@ -12,8 +12,15 @@ import (
 )
 
 var sshConfig *ssh.ClientConfig
+var sshHost string
 
-func createSSHConfig(sshUser, sshPassword string) *ssh.ClientConfig {
+func createSSHConfig(unifiHost, sshUser, sshPassword string) (*ssh.ClientConfig, error) {
+	host, err := extractHost(unifiHost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract host from URL: %w", err)
+	}
+	sshHost = host
+
 	return &ssh.ClientConfig{
 		User: sshUser,
 		Auth: []ssh.AuthMethod{
@@ -28,18 +35,14 @@ func createSSHConfig(sshUser, sshPassword string) *ssh.ClientConfig {
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
-	}
+	}, nil
 }
 
-func testSSHConnection(unifiHost string) error {
-	host, err := extractHost(unifiHost)
-	if err != nil {
-		return fmt.Errorf("failed to extract host from URL: %w", err)
-	}
+func testSSHConnection() error {
 
-	client, err := ssh.Dial("tcp", host+":22", sshConfig)
+	client, err := ssh.Dial("tcp", sshHost+":22", sshConfig)
 	if err != nil {
-		return fmt.Errorf("failed to establish SSH connection to %s: %w", host, err)
+		return fmt.Errorf("failed to establish SSH connection to %s: %w", sshHost, err)
 	}
 	defer client.Close()
 
@@ -52,12 +55,7 @@ func testSSHConnection(unifiHost string) error {
 	return nil
 }
 
-func cleanupBouncerAuditEntries(unifiHost string, lookbackMinutes int) error {
-	host, err := extractHost(unifiHost)
-	if err != nil {
-		return fmt.Errorf("failed to extract host from URL: %w", err)
-	}
-
+func cleanupBouncerAuditEntries(lookbackMinutes int) error {
 	lookbackTime := time.Now().Add(-time.Duration(lookbackMinutes) * time.Minute).UnixMilli()
 
 	mongoCmd := fmt.Sprintf(
@@ -65,11 +63,11 @@ func cleanupBouncerAuditEntries(unifiHost string, lookbackMinutes int) error {
 		lookbackTime,
 	)
 
-	log.Debug().Msgf("Executing cleanup command on host %s", host)
+	log.Debug().Msgf("Executing cleanup command on host %s", sshHost)
 
-	client, err := ssh.Dial("tcp", host+":22", sshConfig)
+	client, err := ssh.Dial("tcp", sshHost+":22", sshConfig)
 	if err != nil {
-		return fmt.Errorf("failed to establish SSH connection to %s: %w", host, err)
+		return fmt.Errorf("failed to establish SSH connection to %s: %w", sshHost, err)
 	}
 	defer client.Close()
 

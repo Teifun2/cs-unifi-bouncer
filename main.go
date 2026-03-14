@@ -56,8 +56,12 @@ func main() {
 	// Initialize SSH config for audit log cleanup if enabled
 	if unifiLogCleanup {
 		log.Info().Msg("Audit log cleanup is enabled, testing SSH connection...")
-		sshConfig = createSSHConfig(unifiLogCleanupUser, unifiLogCleanupPassword)
-		if err := testSSHConnection(unifiHost); err != nil {
+		var err error
+		sshConfig, err = createSSHConfig(unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to create SSH configuration")
+		}
+		if err := testSSHConnection(); err != nil {
 			log.Fatal().Err(err).Msg("SSH connection test failed. Please check your SSH credentials and ensure SSH is enabled on your UniFi device.")
 		}
 		log.Info().Msg("SSH connection test successful")
@@ -132,7 +136,7 @@ func main() {
 				// Periodically clean up audit log entries
 				if unifiLogCleanup {
 					log.Debug().Msg("Running scheduled audit log cleanup...")
-					if err := cleanupBouncerAuditEntries(unifiHost, unifiLogCleanupMinutes); err != nil {
+					if err := cleanupBouncerAuditEntries(unifiLogCleanupMinutes); err != nil {
 						log.Warn().Err(err).Msg("Scheduled audit log cleanup failed (non-fatal)")
 					}
 				}
