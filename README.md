@@ -107,6 +107,8 @@ Some users have reported that the UniFi control plane becomes slow or unresponsi
 
 This fix caps the `admin_activity_log` collection to 10 MB. Once applied, MongoDB automatically discards older entries to stay within the limit, preventing the collection from growing out of control. No bouncer configuration changes are needed.
 
+[Original Discussion](https://community.ui.com/questions/High-CPU-usage-MongoDB/535a4ab9-9a09-45f8-9ed7-a17560912edf?reply=16)
+
 SSH into your UniFi device and run:
 
 ```shell
