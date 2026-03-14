@@ -29,15 +29,15 @@ type ZoneCache struct {
 }
 
 type unifiAddrList struct {
-	c                      unifi.Client
-	blockedAddresses       map[bool]map[string]bool
-	firewallGroups         map[bool]map[string]string
-	firewallRule           map[bool]map[string]FirewallRuleCache
-	firewallZonePolicy     map[bool]map[string]FirewallZonePolicyCache
-	modified               bool
-	isZoneBased            bool
-	firewallZones          map[string]ZoneCache
-	initialReorderingDone  bool
+	c                     unifi.Client
+	blockedAddresses      map[bool]map[string]bool
+	firewallGroups        map[bool]map[string]string
+	firewallRule          map[bool]map[string]FirewallRuleCache
+	firewallZonePolicy    map[bool]map[string]FirewallZonePolicyCache
+	modified              bool
+	isZoneBased           bool
+	firewallZones         map[string]ZoneCache
+	initialReorderingDone bool
 }
 
 // This variable is set by the build process with ldflags
@@ -54,11 +54,12 @@ func main() {
 	initConfig()
 
 	bouncer := &csbouncer.StreamBouncer{
-		APIKey:         crowdsecBouncerAPIKey,
-		APIUrl:         crowdsecBouncerURL,
-		TickerInterval: crowdsecUpdateInterval,
-		Origins:        crowdsecOrigins,
-		UserAgent:      fmt.Sprintf("cs-unifi-bouncer/%s", version),
+		APIKey:             crowdsecBouncerAPIKey,
+		APIUrl:             crowdsecBouncerURL,
+		TickerInterval:     crowdsecUpdateInterval,
+		Origins:            crowdsecOrigins,
+		UserAgent:          fmt.Sprintf("cs-unifi-bouncer/%s", version),
+		InsecureSkipVerify: &crowdsecSkipTLSVerify,
 	}
 	if err := bouncer.Init(); err != nil {
 		log.Fatal().Err(err).Msg("Bouncer init failed")
@@ -90,7 +91,12 @@ func main() {
 			case <-ctx.Done():
 				log.Error().Msg("terminating bouncer process")
 				return nil
-			case decisions := <-bouncer.Stream:
+			case decisions, ok := <-bouncer.Stream:
+				if !ok {
+					// Stream was closed, likely due to CrowdSec API authentication failure
+					log.Error().Msg("CrowdSec API connection failed (check API key and URL)")
+					return nil
+				}
 				// Reset the inactivity timer
 				inactivityTimer.Reset(time.Second)
 
