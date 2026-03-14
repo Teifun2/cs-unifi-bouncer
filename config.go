@@ -139,4 +139,8 @@ func initConfig() {
 	if unifiLogCleanup && unifiLogCleanupPassword == "" {
 		log.Fatal().Msg("UNIFI_LOG_CLEANUP_PASSWORD is required when UNIFI_LOG_CLEANUP is enabled")
 	}
+
+	if unifiLogCleanup && unifiLogCleanupMinutes <= 0 {
+ 		log.Fatal().Msg("UNIFI_LOG_CLEANUP_MINUTES must be greater than 0 when UNIFI_LOG_CLEANUP is enabled")
+ 	}
 }
