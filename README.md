@@ -113,7 +113,18 @@ environment:
   UNIFI_LOG_CLEANUP_PASSWORD: "your-ssh-password"
 ```
 
-This feature connects via SSH to your UniFi device after each firewall update and cleans up the verbose audit log entries, replacing thousands of individual IP entries with a simple "Updated from bouncer" message. This preserves the audit trail while eliminating the performance impact.
+This feature connects via SSH to your UniFi device periodically (based on `UNIFI_LOG_CLEANUP_MINUTES`) and cleans up the verbose audit log entries, replacing thousands of individual IP entries with a simple "Updated from bouncer" message. This preserves the audit trail while eliminating the performance impact.
+
+**⚠️ Security Warning:**
+
+This feature requires enabling SSH access on your UniFi device and storing the SSH password in your configuration. Please be aware:
+
+- **This is a workaround** for a problem caused by UniFi's excessive audit logging, not our intended method of operation
+- Enabling SSH and storing credentials increases your security risk
+- SSH uses `InsecureIgnoreHostKey` for host key verification (accepts any host key)
+- Only enable this feature if you are experiencing the MongoDB CPU overload issue
+- Use this at your own risk and ensure your network is properly secured
+- Consider using strong passwords and restricting SSH access to specific IP addresses if possible
 
 **Note:** You need to enable SSH access on your UniFi device and know the root password. The SSH password is typically the same as your device's management password.
 

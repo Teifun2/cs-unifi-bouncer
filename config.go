@@ -70,8 +70,6 @@ func initConfig() {
 	viper.SetDefault("unifi_zone_dst", "Internal Vpn Hotspot")
 	viper.BindEnv("unifi_policy_reordering")
 	viper.SetDefault("unifi_policy_reordering", "false")
-	// Audit log cleanup settings - helps prevent MongoDB CPU overload on UDM devices
-	// When enabled, connects via SSH after each update to clean up verbose audit log entries
 	viper.BindEnv("unifi_log_cleanup")
 	viper.SetDefault("unifi_log_cleanup", "false")
 	viper.BindEnv("unifi_log_cleanup_user")
