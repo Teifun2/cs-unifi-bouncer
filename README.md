@@ -86,10 +86,10 @@ The bouncer configuration is made via environment variables:
 | `UNIFI_ZONE_SRC`              | Space separated list of Source Zones for Firewall Policy in Zone Based mode                                                                     | `External`              |    ❌    |
 | `UNIFI_ZONE_DST`              | Space separated list of Destination Zones for Firewall Policy in Zone Based mode                                                                | `Internal Vpn Hotspot`  |    ❌    |
 | `UNIFI_POLICY_REORDERING`     | Enable automatic reordering of firewall policies to ensure cs-unifi-bouncer policies have highest priority (before custom and default policies) | `true`                  |    ❌    |
-| `UNIFI_LOG_CLEANUP`           | Enable automatic cleanup of MongoDB audit log entries to prevent CPU overload (see [Troubleshooting](#mongodb-cpu-overload))              | `false`                 |    ❌    |
-| `UNIFI_LOG_CLEANUP_USER`      | SSH username for audit log cleanup (usually `root` for UDM devices)                                                                       | `root`                  |    ❌    |
-| `UNIFI_LOG_CLEANUP_PASSWORD`  | SSH password for audit log cleanup                                                                                                        | `none`                  | ✅ if cleanup enabled |
-| `UNIFI_LOG_CLEANUP_MINUTES`   | How far back (in minutes) to clean up audit log entries                                                                                   | `30`                    |    ❌    |
+| `UNIFI_LOG_CLEANUP`           | Enable automatic cleanup of MongoDB audit log entries to prevent CPU overload (see [Troubleshooting](#mongodb-cpu-overload))                   | `false`                 |    ❌    |
+| `UNIFI_LOG_CLEANUP_USER`      | SSH username for audit log cleanup (usually `root` for UDM devices)                                                                            | `root`                  |    ❌    |
+| `UNIFI_LOG_CLEANUP_PASSWORD`  | SSH password for audit log cleanup                                                                                                             | `none`                  | ✅ if cleanup enabled |
+| `UNIFI_LOG_CLEANUP_MINUTES`   | How often (in minutes) the audit log cleanup runs and how far back (in minutes) it removes audit log entries                                   | `30`                    |    ❌    |
 
 # Troubleshooting
 
