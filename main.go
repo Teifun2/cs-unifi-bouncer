@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/filipowm/go-unifi/unifi"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 
@@ -42,6 +44,10 @@ type unifiAddrList struct {
 var version = "unknown"
 
 func main() {
+	// Configure zerolog to write to stderr with no buffering
+	// This ensures logs appear immediately in container environments
+	log.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+
 	log.Info().Msg("Starting cs-unifi-bouncer with version: " + version)
 
 	// zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
