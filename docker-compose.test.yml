@@ -3,6 +3,8 @@ services:
   bouncer-unifi:
     build: .
     container_name: bouncer-unifi-test
+    env_file:
+      - .env
     environment:
       # CrowdSec settings
       CROWDSEC_BOUNCER_API_KEY: "${CROWDSEC_BOUNCER_API_KEY}"
