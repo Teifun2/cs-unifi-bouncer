@@ -7,6 +7,10 @@ on:
 
 jobs:
   update_release_draft:
+    permissions:
+      contents: read
+      pull-requests: read
+      releases: write
     runs-on: ubuntu-latest
     steps:
       # Drafts your next Release notes as Pull Requests are merged into "main"
