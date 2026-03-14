@@ -103,7 +103,25 @@ Some users have reported that the UniFi control plane becomes slow or unresponsi
 - `mongod` process at 300%+ CPU usage
 - Network continues to work, but control plane is unusable
 
-**Solution:**
+**Solution A: One-time MongoDB collection capping (no SSH credentials required)**
+
+This fix caps the `admin_activity_log` collection to 10 MB. Once applied, MongoDB automatically discards older entries to stay within the limit, preventing the collection from growing out of control. No bouncer configuration changes are needed.
+
+SSH into your UniFi device and run:
+
+```shell
+# Drop the collection so it can be recreated as a capped collection
+mongo ace --port 27117 --quiet --eval 'db.admin_activity_log.drop()'
+
+# Cap the collection to 10 MB
+mongo ace --port 27117 --quiet --eval 'db.runCommand({ convertToCapped: "admin_activity_log", size: 10000000 })'
+```
+
+> **Note:** The `drop` command is optional — `convertToCapped` works on an existing collection too and is sufficient on its own if you prefer not to lose existing log entries.
+
+> **⚠️ Important:** UniFi firmware/software updates may recreate the `admin_activity_log` collection without the capped configuration, causing the issue to reappear. If you notice the slowdown returning after an update, re-run the `convertToCapped` command above. If you prefer a fully automated fix that survives updates, use Solution B instead.
+
+**Solution B: Automatic periodic cleanup via SSH (bouncer-managed)**
 
 Enable the audit log cleanup feature by setting these environment variables:
 
@@ -116,7 +134,7 @@ environment:
 
 This feature connects via SSH to your UniFi device periodically (based on `UNIFI_LOG_CLEANUP_MINUTES`) and cleans up the verbose audit log entries, replacing thousands of individual IP entries with a simple "Updated from bouncer" message. This preserves the audit trail while eliminating the performance impact.
 
-**⚠️ Security Warning:**
+**⚠️ Security Warning (Solution B only):**
 
 This feature requires enabling SSH access on your UniFi device and storing the SSH password in your configuration. Please be aware:
 
