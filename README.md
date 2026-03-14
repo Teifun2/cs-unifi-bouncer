@@ -70,7 +70,7 @@ The bouncer configuration is made via environment variables:
 | `CROWDSEC_URL`                | Host and port of CrowdSec agent                                                                                                           | `http://crowdsec:8080/` |    ✅    |
 | `CROWDSEC_ORIGINS`            | Space separated list of CrowdSec origins to filter from LAPI (EG: "crowdsec cscli")                                                       | `none`                  |    ❌    |
 | `CROWDSEC_UPDATE_INTERVAL`    | Interval Frequency Querying the Crowdsec API for changes to the blocklist.                                                                | `5s`                    |    ❌    |
-| `LOG_LEVEL`                   | Minimum log level for bouncer in [zerolog levels](https://pkg.go.dev/github.com/rs/zerolog#readme-leveled-logging)                        | `1`                     |    ❌    |
+| `LOG_LEVEL`                   | Minimum log level for bouncer (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `panic`)                                               | `info`                  |    ❌    |
 | `UNIFI_HOST`                  | Unifi appliance address                                                                                                                   | `none`                  |    ✅    |
 | `UNIFI_API_KEY`               | Unifi appliance API key                                                                                                                   | `none`                  | ✅ / ❌  |
 | `UNIFI_USER`                  | Unifi appliance username                                                                                                                  | `none`                  | ✅ / ❌  |
