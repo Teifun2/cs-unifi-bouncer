@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/filipowm/go-unifi/unifi"
 	"github.com/rs/zerolog/log"
@@ -162,6 +163,12 @@ func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, grou
 	}
 
 	if err != nil {
+		// If updating and got "not found", it means no changes were needed (UniFi returns empty data)
+		if ID != "" && errors.Is(err, unifi.ErrNotFound) {
+			log.Debug().Msgf("No update needed for firewall group: %s", groupName)
+			mal.firewallGroups[ipv6][group.Name] = group.ID
+			return group.ID
+		}
 		log.Fatal().Err(err).Msgf("Failed to post firewall group: %v", group)
 		return ""
 	} else {
