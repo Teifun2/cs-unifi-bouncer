@@ -13,6 +13,7 @@ var (
 	crowdsecBouncerURL     string
 	crowdsecOrigins        []string
 	crowdsecUpdateInterval string
+	crowdsecSkipTLSVerify  bool
 	unifiHost              string
 	unifiSite              string
 	unifiAPIKey            string
@@ -36,7 +37,7 @@ var (
 
 func initConfig() {
 	viper.BindEnv("log_level")
-	viper.SetDefault("log_level", "1")
+	viper.SetDefault("log_level", "info")
 	viper.BindEnv("crowdsec_bouncer_api_key")
 	viper.BindEnv("crowdsec_url")
 	viper.SetDefault("crowdsec_url", "http://crowdsec:8080/")
@@ -44,6 +45,8 @@ func initConfig() {
 	viper.SetDefault("crowdsec_update_interval", "5s")
 	viper.BindEnv("crowdsec_origins")
 	viper.SetDefault("crowdsec_origins", nil)
+	viper.BindEnv("crowdsec_skip_tls_verify")
+	viper.SetDefault("crowdsec_skip_tls_verify", "false")
 	viper.BindEnv("unifi_host")
 	viper.BindEnv("unifi_api_key")
 	viper.BindEnv("unifi_user")
@@ -97,6 +100,8 @@ func initConfig() {
 	crowdsecOrigins = viper.GetStringSlice("crowdsec_origins")
 
 	crowdsecUpdateInterval = viper.GetString("crowdsec_update_interval")
+
+	crowdsecSkipTLSVerify = viper.GetBool("crowdsec_skip_tls_verify")
 
 	unifiHost = viper.GetString("unifi_host")
 

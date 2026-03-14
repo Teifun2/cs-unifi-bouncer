@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/filipowm/go-unifi/unifi"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 
@@ -42,6 +44,10 @@ type unifiAddrList struct {
 var version = "unknown"
 
 func main() {
+	// Configure zerolog to write to stderr with no buffering
+	// This ensures logs appear immediately in container environments
+	log.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+
 	log.Info().Msg("Starting cs-unifi-bouncer with version: " + version)
 
 	// zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
@@ -58,11 +64,12 @@ func main() {
 	}
 
 	bouncer := &csbouncer.StreamBouncer{
-		APIKey:         crowdsecBouncerAPIKey,
-		APIUrl:         crowdsecBouncerURL,
-		TickerInterval: crowdsecUpdateInterval,
-		Origins:        crowdsecOrigins,
-		UserAgent:      fmt.Sprintf("cs-unifi-bouncer/%s", version),
+		APIKey:             crowdsecBouncerAPIKey,
+		APIUrl:             crowdsecBouncerURL,
+		TickerInterval:     crowdsecUpdateInterval,
+		Origins:            crowdsecOrigins,
+		UserAgent:          fmt.Sprintf("cs-unifi-bouncer/%s", version),
+		InsecureSkipVerify: &crowdsecSkipTLSVerify,
 	}
 	if err := bouncer.Init(); err != nil {
 		log.Fatal().Err(err).Msg("Bouncer init failed")
@@ -104,7 +111,12 @@ func main() {
 			case <-ctx.Done():
 				log.Error().Msg("terminating bouncer process")
 				return nil
-			case decisions := <-bouncer.Stream:
+			case decisions, ok := <-bouncer.Stream:
+				if !ok {
+					// Stream was closed, likely due to CrowdSec API authentication failure
+					log.Error().Msg("CrowdSec API connection failed (check API key and URL)")
+					return nil
+				}
 				// Reset the inactivity timer
 				inactivityTimer.Reset(time.Second)
 
