@@ -33,7 +33,7 @@ This is a Fork of [funkolab/cs-mikrotik-bouncer](https://github.com/funkolab/cs-
 - [x] Gateway Lite (UXG-Lite)
 - [ ] Gateway Pro (UXG-Pro)
 - [ ] Gateway Enterprise (UXG-Enterprise)
-- [ ] Cloud Gateway Max (UCG-Max)
+- [x] Cloud Gateway Max (UCG-Max)
 - [x] Cloud Gateway Ultra (UCG-Ultra)
 - [x] Cloud Gateway Fiber (UCG-Fiber)
 - [x] UniFi Express (UX)
