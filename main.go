@@ -53,6 +53,20 @@ func main() {
 	// zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	initConfig()
 
+	// Initialize SSH config for audit log cleanup if enabled
+	if unifiLogCleanup {
+		log.Info().Msg("Audit log cleanup is enabled, testing SSH connection...")
+		var err error
+		sshConfig, err = createSSHConfig(unifiHost, unifiLogCleanupUser, unifiLogCleanupPassword)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to create SSH configuration")
+		}
+		if err := testSSHConnection(); err != nil {
+			log.Fatal().Err(err).Msg("SSH connection test failed. Please check your SSH credentials and ensure SSH is enabled on your UniFi device.")
+		}
+		log.Info().Msg("SSH connection test successful")
+	}
+
 	bouncer := &csbouncer.StreamBouncer{
 		APIKey:             crowdsecBouncerAPIKey,
 		APIUrl:             crowdsecBouncerURL,
@@ -81,6 +95,16 @@ func main() {
 	inactivityTimer := time.NewTimer(10 * time.Second)
 	defer inactivityTimer.Stop()
 
+	// Timer for periodic audit log cleanup
+	var cleanupTimer *time.Ticker
+	var cleanupChan <-chan time.Time
+	if unifiLogCleanup {
+		cleanupTimer = time.NewTicker(time.Duration(unifiLogCleanupMinutes) * time.Minute)
+		defer cleanupTimer.Stop()
+		cleanupChan = cleanupTimer.C
+		log.Info().Msgf("Audit log cleanup will run every %d minutes", unifiLogCleanupMinutes)
+	}
+
 	// At startup, we need to call all update functions to ensure the firewall is in sync with the decisions
 	mal.modified = true
 
@@ -108,6 +132,14 @@ func main() {
 					mal.updateFirewall(ctx, true)
 				}
 				mal.modified = false
+			case <-cleanupChan:
+				// Periodically clean up audit log entries
+				if unifiLogCleanup {
+					log.Debug().Msg("Running scheduled audit log cleanup...")
+					if err := cleanupBouncerAuditEntries(unifiLogCleanupMinutes); err != nil {
+						log.Warn().Err(err).Msg("Scheduled audit log cleanup failed (non-fatal)")
+					}
+				}
 			}
 		}
 	})

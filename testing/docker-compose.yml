@@ -1,0 +1,9 @@
+services:
+  bouncer-unifi:
+    build: 
+      context: ..
+      dockerfile: testing/Dockerfile
+    container_name: bouncer-unifi-test
+    env_file:
+      - .env
+    restart: "no"

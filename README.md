@@ -14,7 +14,7 @@ A CrowdSec Bouncer for Unifi appliance
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/teifun2/cs-unifi-bouncer)
 
 > [!WARNING]
-> This was tested with the following [devices](#tested-devices). Further testing is needed
+> **MongoDB CPU Overload Issue**: Some users experience high CPU usage and slow UniFi control plane performance when running this bouncer due to excessive audit logging. See the [MongoDB CPU Overload](#mongodb-cpu-overload) troubleshooting section for details and the workaround solution.
 
 # Description
 
@@ -86,6 +86,48 @@ The bouncer configuration is made via environment variables:
 | `UNIFI_ZONE_SRC`              | Space separated list of Source Zones for Firewall Policy in Zone Based mode                                                                     | `External`              |    ❌    |
 | `UNIFI_ZONE_DST`              | Space separated list of Destination Zones for Firewall Policy in Zone Based mode                                                                | `Internal Vpn Hotspot`  |    ❌    |
 | `UNIFI_POLICY_REORDERING`     | Enable automatic reordering of firewall policies to ensure cs-unifi-bouncer policies have highest priority (before custom and default policies) | `true`                  |    ❌    |
+| `UNIFI_LOG_CLEANUP`           | Enable automatic cleanup of MongoDB audit log entries to prevent CPU overload (see [Troubleshooting](#mongodb-cpu-overload))                   | `false`                 |    ❌    |
+| `UNIFI_LOG_CLEANUP_USER`      | SSH username for audit log cleanup (usually `root` for UDM devices)                                                                            | `root`                  |    ❌    |
+| `UNIFI_LOG_CLEANUP_PASSWORD`  | SSH password for audit log cleanup                                                                                                             | `none`                  | ✅ if cleanup enabled |
+| `UNIFI_LOG_CLEANUP_MINUTES`   | How often (in minutes) the audit log cleanup runs and how far back (in minutes) it removes audit log entries                                   | `30`                    |    ❌    |
+
+# Troubleshooting
+
+## MongoDB CPU Overload
+
+Some users have reported that the UniFi control plane becomes slow or unresponsive after running the bouncer for a while. This is caused by the UniFi controller logging every individual IP address change to the `admin_activity_log` collection in MongoDB, which can grow very large (1GB+) and cause high CPU usage (300%+).
+
+**Symptoms:**
+- UniFi console becomes slow or unresponsive
+- Console shows "Getting ready" for extended periods
+- `mongod` process at 300%+ CPU usage
+- Network continues to work, but control plane is unusable
+
+**Solution:**
+
+Enable the audit log cleanup feature by setting these environment variables:
+
+```yaml
+environment:
+  UNIFI_LOG_CLEANUP: "true"
+  UNIFI_LOG_CLEANUP_USER: "root"
+  UNIFI_LOG_CLEANUP_PASSWORD: "your-ssh-password"
+```
+
+This feature connects via SSH to your UniFi device periodically (based on `UNIFI_LOG_CLEANUP_MINUTES`) and cleans up the verbose audit log entries, replacing thousands of individual IP entries with a simple "Updated from bouncer" message. This preserves the audit trail while eliminating the performance impact.
+
+**⚠️ Security Warning:**
+
+This feature requires enabling SSH access on your UniFi device and storing the SSH password in your configuration. Please be aware:
+
+- **This is a workaround** for a problem caused by UniFi's excessive audit logging, not our intended method of operation
+- Enabling SSH and storing credentials increases your security risk
+- SSH uses `InsecureIgnoreHostKey` for host key verification (accepts any host key)
+- Only enable this feature if you are experiencing the MongoDB CPU overload issue
+- Use this at your own risk and ensure your network is properly secured
+- Consider using strong passwords and restricting SSH access to specific IP addresses if possible
+
+**Note:** You need to enable SSH access on your UniFi device and know the root password. The SSH password is typically the same as your device's management password.
 
 # Contribution
 

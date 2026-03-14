@@ -8,6 +8,7 @@ require (
 	github.com/filipowm/go-unifi v1.8.1
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/viper v1.20.1
+	golang.org/x/crypto v0.39.0
 	golang.org/x/sync v0.15.0
 )
 
@@ -33,7 +34,6 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.26.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
-	golang.org/x/crypto v0.39.0 // indirect
 )
 
 require (
