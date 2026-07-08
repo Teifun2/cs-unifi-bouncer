@@ -77,7 +77,17 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 		log.Fatal().Err(err).Msg("Failed to get firewall groups")
 	}
 
+	blockedPortsGroupFound := 0
+
 	for _, group := range groups {
+		if blockedPortsGroup != "" && group.Name == blockedPortsGroup {
+			blockedPortsGroupFound++
+			if !strings.Contains(group.GroupType, "port") {
+				log.Fatal().Msgf("Firewall group %s has wrong type %s, expected a port group", blockedPortsGroup, group.GroupType)
+			}
+			mal.blockedPortsGroupID = group.ID
+		}
+
 		if strings.Contains(group.Name, "cs-unifi-bouncer") {
 			ipv6 := strings.Contains(group.Name, "ipv6")
 
@@ -85,6 +95,15 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 			for _, member := range group.GroupMembers {
 				mal.blockedAddresses[ipv6][member] = true
 			}
+		}
+	}
+
+	if blockedPortsGroup != "" {
+		if blockedPortsGroupFound == 0 {
+			log.Fatal().Msgf("Firewall port group %s not found", blockedPortsGroup)
+		}
+		if blockedPortsGroupFound > 1 {
+			log.Fatal().Msgf("Firewall port group %s is not unique", blockedPortsGroup)
 		}
 	}
 
@@ -97,8 +116,16 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 	for _, rule := range rules {
 		if strings.Contains(rule.Name, "cs-unifi-bouncer") {
 			ipv6 := strings.Contains(rule.Name, "ipv6")
+			srcGroupID := ""
+			if len(rule.SrcFirewallGroupIDs) > 0 {
+				srcGroupID = rule.SrcFirewallGroupIDs[0]
+			}
+			dstGroupID := ""
+			if len(rule.DstFirewallGroupIDs) > 0 {
+				dstGroupID = rule.DstFirewallGroupIDs[0]
+			}
 
-			mal.firewallRule[ipv6][rule.Name] = FirewallRuleCache{id: rule.ID, groupId: rule.SrcFirewallGroupIDs[0]}
+			mal.firewallRule[ipv6][rule.Name] = FirewallRuleCache{id: rule.ID, groupId: srcGroupID, dstGroupId: dstGroupID}
 		}
 	}
 
@@ -202,14 +229,16 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 					policyName := fmt.Sprintf("cs-unifi-bouncer-%s-%s->%s-%d", ipVersionString, zoneSrc, zoneDst, i/maxGroupSize)
 					policyId := ""
 					cachedGroupId := ""
+					cachedDstGroupId := ""
 					if policyCache, exists := mal.firewallZonePolicy[ipv6][policyName]; exists {
 						policyId = policyCache.id
 						cachedGroupId = policyCache.groupId
+						cachedDstGroupId = policyCache.dstGroupId
 					}
 					// Post the firewall rule, skip if the group ID is the same as the cached one (no changes)
-					if groupID != "" && groupID != cachedGroupId {
+					if groupID != "" && (groupID != cachedGroupId || mal.blockedPortsGroupID != cachedDstGroupId) {
 						newPoliciesPosted = true
-						mal.postFirewallPolicy(ctx, policyId, policyName, ipv6, groupID, zoneSrc, zoneDst)
+						mal.postFirewallPolicy(ctx, policyId, policyName, ipv6, groupID, mal.blockedPortsGroupID, zoneSrc, zoneDst)
 					}
 				}
 			}
@@ -225,14 +254,16 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			ruleName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, i/maxGroupSize)
 			ruleId := ""
 			cachedGroupId := ""
+			cachedDstGroupId := ""
 			if ruleCache, exists := mal.firewallRule[ipv6][ruleName]; exists {
 				ruleId = ruleCache.id
 				cachedGroupId = ruleCache.groupId
+				cachedDstGroupId = ruleCache.dstGroupId
 			}
 
 			// Post the firewall rule, skip if the group ID is the same as the cached one (no changes)
-			if groupID != "" && groupID != cachedGroupId {
-				mal.postFirewallRule(ctx, i/maxGroupSize, ruleId, ruleName, ipv6, groupID)
+			if groupID != "" && (groupID != cachedGroupId || mal.blockedPortsGroupID != cachedDstGroupId) {
+				mal.postFirewallRule(ctx, i/maxGroupSize, ruleId, ruleName, ipv6, groupID, mal.blockedPortsGroupID)
 			}
 		}
 	}

@@ -21,7 +21,7 @@ import (
 // The function constructs a firewall rule with the specified parameters and either
 // updates an existing rule or creates a new one in the UniFi controller. If the
 // operation fails, it logs a fatal error. Otherwise, it logs an informational message.
-func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID string, ruleName string, ipv6 bool, groupId string) {
+func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID string, ruleName string, ipv6 bool, groupId string, dstGroupId string) {
 	ruleset := "WAN_IN"
 	if ipv6 {
 		ruleset = "WANv6_IN"
@@ -42,6 +42,10 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 		SettingPreference:   "auto",
 		RuleIndex:           startRuleIndex + index,
 		Logging:             unifiLogging,
+	}
+
+	if dstGroupId != "" {
+		firewallRule.DstFirewallGroupIDs = []string{dstGroupId}
 	}
 
 	if !ipv6 {
@@ -66,11 +70,11 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 			firewallRule = newFirewallRule
 		}
 		log.Info().Msg("Firewall rule posted")
-		mal.firewallRule[ipv6][firewallRule.Name] = FirewallRuleCache{id: firewallRule.ID, groupId: groupId}
+		mal.firewallRule[ipv6][firewallRule.Name] = FirewallRuleCache{id: firewallRule.ID, groupId: groupId, dstGroupId: dstGroupId}
 	}
 }
 
-func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, policyName string, ipv6 bool, groupId string, srcZone string, dstZone string) {
+func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, policyName string, ipv6 bool, groupId string, dstGroupId string, srcZone string, dstZone string) {
 	ipVersion := "IPV4"
 	if ipv6 {
 		ipVersion = "IPV6"
@@ -97,13 +101,19 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 			IPGroupID:          groupId,
 		},
 		Destination: unifi.FirewallZonePolicyDestination{
-			ZoneID:           dstZoneId,
-			MatchingTarget:   "ANY",
-			PortMatchingType: "ANY",
+			ZoneID:             dstZoneId,
+			MatchingTarget:     "ANY",
+			MatchingTargetType: "ANY",
+			PortMatchingType:   "ANY",
 		},
 		Schedule: unifi.FirewallZonePolicySchedule{
 			Mode: "ALWAYS",
 		},
+	}
+
+	if dstGroupId != "" {
+		firewallZonePolicy.Destination.PortMatchingType = "OBJECT"
+		firewallZonePolicy.Destination.PortGroupID = dstGroupId
 	}
 
 	var err error
@@ -123,7 +133,7 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 			firewallZonePolicy = newFirewallZonePolicy
 		}
 		log.Info().Msg("Firewall policy posted")
-		var firewallZonePolicyCache = FirewallZonePolicyCache{id: firewallZonePolicy.ID, groupId: groupId}
+		var firewallZonePolicyCache = FirewallZonePolicyCache{id: firewallZonePolicy.ID, groupId: groupId, dstGroupId: dstGroupId}
 		mal.firewallZonePolicy[ipv6][firewallZonePolicy.Name] = firewallZonePolicyCache
 	}
 }

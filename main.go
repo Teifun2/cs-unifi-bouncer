@@ -15,13 +15,15 @@ import (
 )
 
 type FirewallRuleCache struct {
-	id      string
-	groupId string
+	id         string
+	groupId    string
+	dstGroupId string
 }
 
 type FirewallZonePolicyCache struct {
-	id      string
-	groupId string
+	id         string
+	groupId    string
+	dstGroupId string
 }
 
 type ZoneCache struct {
@@ -37,6 +39,7 @@ type unifiAddrList struct {
 	modified              bool
 	isZoneBased           bool
 	firewallZones         map[string]ZoneCache
+	blockedPortsGroupID   string
 	initialReorderingDone bool
 }
 

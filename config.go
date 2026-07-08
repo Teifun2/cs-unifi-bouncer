@@ -28,6 +28,7 @@ var (
 	unifiZoneSrc           []string
 	unifiZoneDst           []string
 	unifiPolicyReordering  bool
+	blockedPortsGroup      string
 	// Audit log cleanup settings (to prevent MongoDB CPU overload)
 	unifiLogCleanup         bool
 	unifiLogCleanupUser     string
@@ -76,6 +77,7 @@ func initConfig() {
 	viper.SetDefault("unifi_zone_dst", "Internal Vpn Hotspot")
 	viper.BindEnv("unifi_policy_reordering")
 	viper.SetDefault("unifi_policy_reordering", "false")
+	viper.BindEnv("unifi_blocked_ports_group")
 	viper.BindEnv("unifi_log_cleanup")
 	viper.SetDefault("unifi_log_cleanup", "false")
 	viper.BindEnv("unifi_log_cleanup_user")
@@ -138,6 +140,7 @@ func initConfig() {
 	unifiZoneDst = viper.GetStringSlice("unifi_zone_dst")
 
 	unifiPolicyReordering = viper.GetBool("unifi_policy_reordering")
+	blockedPortsGroup = viper.GetString("unifi_blocked_ports_group")
 
 	unifiLogCleanup = viper.GetBool("unifi_log_cleanup")
 	unifiLogCleanupUser = viper.GetString("unifi_log_cleanup_user")
