@@ -41,6 +41,12 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 	}
 
 	mal.c = c
+	mal.loadUnifiState(ctx)
+}
+
+func (mal *unifiAddrList) loadUnifiState(ctx context.Context) {
+	c := mal.c
+	var err error
 
 	mal.blockedAddresses = make(map[bool]map[string]bool)
 	mal.blockedAddresses[true] = make(map[string]bool)
@@ -49,6 +55,10 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 	mal.firewallGroups = make(map[bool]map[string]string)
 	mal.firewallGroups[true] = make(map[string]string)
 	mal.firewallGroups[false] = make(map[string]string)
+	mal.firewallGroupMembers = map[bool]map[string][]string{
+		true:  make(map[string][]string),
+		false: make(map[string][]string),
+	}
 
 	mal.firewallRule = make(map[bool]map[string]FirewallRuleCache)
 	mal.firewallRule[true] = make(map[string]FirewallRuleCache)
@@ -82,6 +92,9 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 			ipv6 := strings.Contains(group.Name, "ipv6")
 
 			mal.firewallGroups[ipv6][group.Name] = group.ID
+			members := slices.Clone(group.GroupMembers)
+			sort.Strings(members)
+			mal.firewallGroupMembers[ipv6][group.Name] = members
 			for _, member := range group.GroupMembers {
 				mal.blockedAddresses[ipv6][member] = true
 			}
@@ -169,6 +182,9 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 
 	// Get all cached addresses
 	addresses := getKeys(mal.blockedAddresses[ipv6])
+	// Map iteration order changes between reconciliations. Sort before partitioning
+	// so a small decision change does not redistribute the entire blocklist.
+	sort.Strings(addresses)
 
 	// Calculate the number of groups needed
 	numGroups := (len(addresses) + maxGroupSize - 1) / maxGroupSize
@@ -308,6 +324,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 		} else {
 			log.Info().Msgf("Deleted old firewall group: %s", groupName)
 			delete(mal.firewallGroups[ipv6], groupName)
+			delete(mal.firewallGroupMembers[ipv6], groupName)
 		}
 	}
 }

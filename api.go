@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
+	"sort"
 
 	"github.com/filipowm/go-unifi/unifi"
 	"github.com/rs/zerolog/log"
@@ -84,7 +86,7 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 		Enabled:             true,
 		Name:                policyName,
 		ConnectionStateType: "CUSTOM",
-		ConnectionStates:  []string{"NEW", "INVALID"},
+		ConnectionStates:    []string{"NEW", "INVALID"},
 		Protocol:            "all",
 		IPVersion:           ipVersion,
 		Logging:             unifiLogging,
@@ -141,42 +143,55 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 //
 // The function logs a fatal error if the operation fails, otherwise it logs a success message.
 func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, groupName string, ipv6 bool, members []string) string {
+	members = slices.Clone(members)
+	sort.Strings(members)
+	if cached, ok := mal.firewallGroupMembers[ipv6][groupName]; ok &&
+		ID != "" && mal.firewallGroups[ipv6][groupName] == ID && slices.Equal(cached, members) {
+		log.Debug().Msgf("No update needed for firewall group: %s", groupName)
+		return ID
+	}
+
 	groupType := "address-group"
 	if ipv6 {
 		groupType = "ipv6-address-group"
 	}
 
 	group := &unifi.FirewallGroup{
+		ID:           ID,
 		Name:         groupName,
 		GroupType:    groupType,
 		GroupMembers: members,
 	}
+	groupID, err := mal.writeFirewallGroup(ctx, group, ipv6)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Failed to post firewall group: %v", group)
+		return ""
+	}
+	log.Info().Msg("Firewall group posted")
+	return groupID
+}
 
+// Keep the membership cache at the last acknowledged controller state. The
+// caller retains the existing fatal-error behavior for unsuccessful writes.
+func (mal *unifiAddrList) writeFirewallGroup(ctx context.Context, group *unifi.FirewallGroup, ipv6 bool) (string, error) {
 	var err error
 	var newGroup *unifi.FirewallGroup
 
-	if ID != "" {
-		group.ID = ID
+	if group.ID != "" {
 		_, err = mal.c.UpdateFirewallGroup(ctx, unifiSite, group)
 	} else {
 		newGroup, err = mal.c.CreateFirewallGroup(ctx, unifiSite, group)
 	}
 
-	if err != nil {
-		// If updating and got "not found", it means no changes were needed (UniFi returns empty data)
-		if ID != "" && errors.Is(err, unifi.ErrNotFound) {
-			log.Debug().Msgf("No update needed for firewall group: %s", groupName)
-			mal.firewallGroups[ipv6][group.Name] = group.ID
-			return group.ID
-		}
-		log.Fatal().Err(err).Msgf("Failed to post firewall group: %v", group)
-		return ""
-	} else {
-		if newGroup != nil {
-			group = newGroup
-		}
-		log.Info().Msg("Firewall group posted")
-		mal.firewallGroups[ipv6][group.Name] = group.ID
-		return group.ID
+	// Preserve upstream's handling of an empty successful update response.
+	if err != nil && !(group.ID != "" && errors.Is(err, unifi.ErrNotFound)) {
+		return "", err
 	}
+	members := slices.Clone(group.GroupMembers)
+	if newGroup != nil {
+		group = newGroup
+	}
+	mal.firewallGroups[ipv6][group.Name] = group.ID
+	mal.firewallGroupMembers[ipv6][group.Name] = members
+	return group.ID, nil
 }

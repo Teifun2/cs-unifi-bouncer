@@ -32,6 +32,7 @@ type unifiAddrList struct {
 	c                     unifi.Client
 	blockedAddresses      map[bool]map[string]bool
 	firewallGroups        map[bool]map[string]string
+	firewallGroupMembers  map[bool]map[string][]string
 	firewallRule          map[bool]map[string]FirewallRuleCache
 	firewallZonePolicy    map[bool]map[string]FirewallZonePolicyCache
 	modified              bool
