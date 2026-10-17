@@ -41,22 +41,31 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 	}
 
 	mal.c = c
+	mal.loadUnifiState(ctx)
+}
 
-	mal.blockedAddresses = make(map[bool]map[string]bool)
-	mal.blockedAddresses[true] = make(map[string]bool)
-	mal.blockedAddresses[false] = make(map[string]bool)
+func (mal *unifiAddrList) loadUnifiState(ctx context.Context) {
+	c := mal.c
+	var err error
 
-	mal.firewallGroups = make(map[bool]map[string]string)
-	mal.firewallGroups[true] = make(map[string]string)
-	mal.firewallGroups[false] = make(map[string]string)
+	mal.memberGroup = map[bool]map[string]string{
+		true:  make(map[string]string),
+		false: make(map[string]string),
+	}
+	mal.firewallGroups = map[bool]map[string]*FirewallGroupCache{
+		true:  make(map[string]*FirewallGroupCache),
+		false: make(map[string]*FirewallGroupCache),
+	}
 
-	mal.firewallRule = make(map[bool]map[string]FirewallRuleCache)
-	mal.firewallRule[true] = make(map[string]FirewallRuleCache)
-	mal.firewallRule[false] = make(map[string]FirewallRuleCache)
+	mal.firewallRule = map[bool]map[string]FirewallRuleCache{
+		true:  make(map[string]FirewallRuleCache),
+		false: make(map[string]FirewallRuleCache),
+	}
 
-	mal.firewallZonePolicy = make(map[bool]map[string]FirewallZonePolicyCache)
-	mal.firewallZonePolicy[true] = make(map[string]FirewallZonePolicyCache)
-	mal.firewallZonePolicy[false] = make(map[string]FirewallZonePolicyCache)
+	mal.firewallZonePolicy = map[bool]map[string]FirewallZonePolicyCache{
+		true:  make(map[string]FirewallZonePolicyCache),
+		false: make(map[string]FirewallZonePolicyCache),
+	}
 
 	mal.modified = false
 	mal.isZoneBased = false
@@ -81,10 +90,15 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 		if strings.Contains(group.Name, "cs-unifi-bouncer") {
 			ipv6 := strings.Contains(group.Name, "ipv6")
 
-			mal.firewallGroups[ipv6][group.Name] = group.ID
-			for _, member := range group.GroupMembers {
-				mal.blockedAddresses[ipv6][member] = true
+			cached := &FirewallGroupCache{
+				id:      group.ID,
+				members: make(map[string]bool, len(group.GroupMembers)),
 			}
+			for _, member := range group.GroupMembers {
+				cached.members[member] = true
+				mal.memberGroup[ipv6][member] = group.Name
+			}
+			mal.firewallGroups[ipv6][group.Name] = cached
 		}
 	}
 
@@ -145,16 +159,138 @@ func (mal *unifiAddrList) initUnifi(ctx context.Context) {
 	}
 }
 
-// Function to get keys from a map
-func getKeys(m map[string]bool) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
+// groupIndex extracts the integer index encoded in a group or rule name of the
+// form cs-unifi-bouncer-<ipversion>-<index>.
+func groupIndex(name string) (int, bool) {
+	parts := strings.Split(name, "-")
+	if len(parts) < 5 {
+		return 0, false
 	}
-	return keys
+	index, err := strconv.Atoi(parts[4])
+	if err != nil {
+		return 0, false
+	}
+	return index, true
 }
 
-// Function to update the firewall group
+// policyIndex extracts the source zone, destination zone and integer index from a
+// firewall policy name of the form cs-unifi-bouncer-<ipversion>-<src>-><dst>-<index>.
+func policyIndex(name string) (src string, dst string, index int, ok bool) {
+	parts := strings.Split(name, "-")
+	if len(parts) < 7 {
+		return "", "", 0, false
+	}
+	index, err := strconv.Atoi(parts[6])
+	if err != nil {
+		return "", "", 0, false
+	}
+	return parts[4], strings.ReplaceAll(parts[5], ">", ""), index, true
+}
+
+func sortedMembers(members map[string]bool) []string {
+	out := make([]string, 0, len(members))
+	for member := range members {
+		out = append(out, member)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// groupNamesSorted returns the group names for a family ordered by their encoded
+// index, giving deterministic iteration regardless of Go's map ordering.
+func (mal *unifiAddrList) groupNamesSorted(ipv6 bool) []string {
+	names := make([]string, 0, len(mal.firewallGroups[ipv6]))
+	for name := range mal.firewallGroups[ipv6] {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		left, _ := groupIndex(names[i])
+		right, _ := groupIndex(names[j])
+		return left < right
+	})
+	return names
+}
+
+// firstNonFullGroup returns the lowest-indexed group that still has room, or ""
+// when every group is full (or none exist).
+func (mal *unifiAddrList) firstNonFullGroup(ipv6 bool) string {
+	for _, name := range mal.groupNamesSorted(ipv6) {
+		group := mal.firewallGroups[ipv6][name]
+		if group != nil && len(group.members) < maxGroupSize {
+			return name
+		}
+	}
+	return ""
+}
+
+// newGroupName returns a name for a new group using the lowest free index so
+// indices stay compact; freed indices are reused.
+func (mal *unifiAddrList) newGroupName(ipv6 bool) string {
+	used := make(map[int]bool, len(mal.firewallGroups[ipv6]))
+	for name := range mal.firewallGroups[ipv6] {
+		if index, ok := groupIndex(name); ok {
+			used[index] = true
+		}
+	}
+	index := 0
+	for used[index] {
+		index++
+	}
+
+	ipVersionString := "ipv4"
+	if ipv6 {
+		ipVersionString = "ipv6"
+	}
+	return fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, index)
+}
+
+func (mal *unifiAddrList) isBlocked(ipv6 bool, address string) bool {
+	_, exists := mal.memberGroup[ipv6][address]
+	return exists
+}
+
+// placeMember assigns a newly blocked address to a group without touching the
+// controller. It reuses an existing non-full group, or creates a new one when
+// every group is full. The group is marked touched so the next reconciliation
+// writes it and only it.
+func (mal *unifiAddrList) placeMember(ipv6 bool, address string) {
+	groupName := mal.firstNonFullGroup(ipv6)
+	if groupName == "" {
+		groupName = mal.newGroupName(ipv6)
+		mal.firewallGroups[ipv6][groupName] = &FirewallGroupCache{members: make(map[string]bool)}
+		log.Info().Msgf("Created new firewall group: %s", groupName)
+	}
+
+	group := mal.firewallGroups[ipv6][groupName]
+	group.members[address] = true
+	group.touched = true
+	mal.memberGroup[ipv6][address] = groupName
+}
+
+// removeMember removes an address from its owning group. An emptied group is
+// left for the reconciliation to delete from the controller.
+func (mal *unifiAddrList) removeMember(ipv6 bool, address string) {
+	groupName, exists := mal.memberGroup[ipv6][address]
+	if !exists {
+		return
+	}
+	delete(mal.memberGroup[ipv6], address)
+
+	group := mal.firewallGroups[ipv6][groupName]
+	if group == nil {
+		return
+	}
+	delete(group.members, address)
+	group.touched = true
+}
+
+// Function to update the firewall groups for one address family.
+//
+// Groups are reconciled incrementally: only groups whose membership changed
+// since the last successful write are pushed to the controller. Groups are never
+// repartitioned, so adding or removing one address touches at most the single
+// group it belongs to (plus a create when every group is full, or a delete when
+// a group becomes empty).
 func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 
 	if !mal.modified {
@@ -167,92 +303,154 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 		ipVersionString = "ipv6"
 	}
 
-	// Get all cached addresses
-	addresses := getKeys(mal.blockedAddresses[ipv6])
+	names := mal.groupNamesSorted(ipv6)
+	log.Info().Msgf("Reconciling %d %s firewall group(s)", len(names), ipVersionString)
 
-	// Calculate the number of groups needed
-	numGroups := (len(addresses) + maxGroupSize - 1) / maxGroupSize
-	log.Info().Msgf("Number of %s groups needed: %d", ipVersionString, numGroups)
+	var newPoliciesPosted bool
 
-	// Split addresses into groups of maxGroupSize
-	for i := 0; i < len(addresses); i += maxGroupSize {
-		end := i + maxGroupSize
-		if end > len(addresses) {
-			end = len(addresses)
-		}
-		group := addresses[i:end]
-
-		// Get the group ID if it exists
-		groupName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, i/maxGroupSize)
-		groupID := ""
-		if id, exists := mal.firewallGroups[ipv6][groupName]; exists {
-			groupID = id
+	for _, groupName := range names {
+		group := mal.firewallGroups[ipv6][groupName]
+		if group == nil {
+			continue
 		}
 
-		// Post the firewall group
-		groupID = mal.postFirewallGroup(ctx, groupID, groupName, ipv6, group)
+		index, ok := groupIndex(groupName)
+		if !ok {
+			log.Warn().Msgf("Invalid group index in name: %s", groupName)
+			continue
+		}
 
-		// Used to track if new policies were posted to know if we need to reorder them later
-		var newPoliciesPosted bool
+		// An emptied group is no longer needed.
+		if len(group.members) == 0 {
+			mal.deleteFirewallGroup(ctx, ipv6, groupName)
+			continue
+		}
 
+		// Only push membership that actually changed (or a brand new group).
+		groupID := group.id
+		if groupID == "" || group.touched {
+			groupID = mal.postFirewallGroup(ctx, groupID, groupName, ipv6, sortedMembers(group.members))
+			if groupID == "" {
+				// postFirewallGroup already logged the fatal error.
+				continue
+			}
+			group.id = groupID
+			group.touched = false
+		}
+
+		// Make sure the rule/policy that references this group exists and points
+		// at the current group ID. This is a cheap cache check that only writes
+		// when something is genuinely missing or stale.
 		if mal.isZoneBased {
 			for _, zoneSrc := range unifiZoneSrc {
 				for _, zoneDst := range unifiZoneDst {
-					// Get the policy ID if it exists
-					policyName := fmt.Sprintf("cs-unifi-bouncer-%s-%s->%s-%d", ipVersionString, zoneSrc, zoneDst, i/maxGroupSize)
+					policyName := fmt.Sprintf("cs-unifi-bouncer-%s-%s->%s-%d", ipVersionString, zoneSrc, zoneDst, index)
 					policyId := ""
 					cachedGroupId := ""
 					if policyCache, exists := mal.firewallZonePolicy[ipv6][policyName]; exists {
 						policyId = policyCache.id
 						cachedGroupId = policyCache.groupId
 					}
-					// Post the firewall rule, skip if the group ID is the same as the cached one (no changes)
-					if groupID != "" && groupID != cachedGroupId {
+					if groupID != cachedGroupId {
 						newPoliciesPosted = true
 						mal.postFirewallPolicy(ctx, policyId, policyName, ipv6, groupID, zoneSrc, zoneDst)
 					}
 				}
 			}
-			// Reorder policies after all have been generated (if enabled in config)
-			if unifiPolicyReordering && (newPoliciesPosted || !mal.initialReorderingDone) {
-				newPoliciesPosted = false
-				mal.initialReorderingDone = true
-				mal.reorderFirewallPolicies(ctx)
-			}
-
 		} else {
-			// Get the rule ID if it exists
-			ruleName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, i/maxGroupSize)
+			ruleName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionString, index)
 			ruleId := ""
 			cachedGroupId := ""
 			if ruleCache, exists := mal.firewallRule[ipv6][ruleName]; exists {
 				ruleId = ruleCache.id
 				cachedGroupId = ruleCache.groupId
 			}
-
-			// Post the firewall rule, skip if the group ID is the same as the cached one (no changes)
-			if groupID != "" && groupID != cachedGroupId {
-				mal.postFirewallRule(ctx, i/maxGroupSize, ruleId, ruleName, ipv6, groupID)
+			if groupID != cachedGroupId {
+				mal.postFirewallRule(ctx, index, ruleId, ruleName, ipv6, groupID)
 			}
 		}
 	}
 
-	// Delete old firewall rules
+	// Reorder policies after all have been generated (if enabled in config)
+	if mal.isZoneBased && unifiPolicyReordering && (newPoliciesPosted || !mal.initialReorderingDone) {
+		mal.initialReorderingDone = true
+		mal.reorderFirewallPolicies(ctx)
+	}
+
+	// Remove rules/policies that no longer map to a managed group (e.g. groups
+	// deleted while the bouncer was down, or out-of-scope zones).
+	mal.deleteOrphanRulesAndPolicies(ctx, ipv6)
+}
+
+// deleteFirewallGroup removes a group that no longer has any members, along with
+// the rules/policies that referenced it. If the controller delete fails the
+// group is kept so the next reconciliation retries.
+func (mal *unifiAddrList) deleteFirewallGroup(ctx context.Context, ipv6 bool, groupName string) {
+	group := mal.firewallGroups[ipv6][groupName]
+	if group == nil {
+		return
+	}
+
+	index, _ := groupIndex(groupName)
+	mal.deleteGroupRulesAndPolicies(ctx, ipv6, index)
+
+	if group.id != "" {
+		if err := mal.c.DeleteFirewallGroup(ctx, unifiSite, group.id); err != nil {
+			log.Error().Err(err).Msgf("Failed to delete old firewall group: %s", groupName)
+			return
+		}
+	}
+
+	log.Info().Msgf("Deleted old firewall group: %s", groupName)
+	delete(mal.firewallGroups[ipv6], groupName)
+}
+
+// deleteGroupRulesAndPolicies deletes every rule/policy that belongs to a group
+// index, regardless of whether the group was zone-based.
+func (mal *unifiAddrList) deleteGroupRulesAndPolicies(ctx context.Context, ipv6 bool, index int) {
+	if mal.isZoneBased {
+		for policyName, policyCache := range mal.firewallZonePolicy[ipv6] {
+			_, _, policyGroupIndex, ok := policyIndex(policyName)
+			if !ok || policyGroupIndex != index {
+				continue
+			}
+			if err := mal.c.DeleteFirewallZonePolicy(ctx, unifiSite, policyCache.id); err != nil {
+				log.Error().Err(err).Msgf("Failed to delete old firewall policy: %s", policyName)
+			} else {
+				log.Info().Msgf("Deleted old firewall policy: %s", policyName)
+				delete(mal.firewallZonePolicy[ipv6], policyName)
+			}
+		}
+		return
+	}
+
+	ruleName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionStringFor(ipv6), index)
+	if ruleCache, exists := mal.firewallRule[ipv6][ruleName]; exists {
+		if err := mal.c.DeleteFirewallRule(ctx, unifiSite, ruleCache.id); err != nil {
+			log.Error().Err(err).Msgf("Failed to delete old firewall rule: %s", ruleName)
+		} else {
+			log.Info().Msgf("Deleted old firewall rule: %s", ruleName)
+			delete(mal.firewallRule[ipv6], ruleName)
+		}
+	}
+}
+
+// deleteOrphanRulesAndPolicies removes cached rules/policies whose group index no
+// longer exists, or whose zones are out of scope.
+func (mal *unifiAddrList) deleteOrphanRulesAndPolicies(ctx context.Context, ipv6 bool) {
+	existing := make(map[int]bool, len(mal.firewallGroups[ipv6]))
+	for name := range mal.firewallGroups[ipv6] {
+		if index, ok := groupIndex(name); ok {
+			existing[index] = true
+		}
+	}
+
 	for ruleName, ruleCache := range mal.firewallRule[ipv6] {
-		// Check if the rule index is lower than numGroups
-		parts := strings.Split(ruleName, "-")
-		index, err := strconv.Atoi(parts[4])
-		if err != nil {
-			log.Warn().Msgf("Invalid rule index in name: %s", ruleName)
+		index, ok := groupIndex(ruleName)
+		if ok && existing[index] {
 			continue
 		}
-		// If isZoneBased, then delete all rules independent of index
-		if !mal.isZoneBased && index < numGroups {
-			continue
-		}
-		// Delete the old firewall rule
-		err = mal.c.DeleteFirewallRule(ctx, unifiSite, ruleCache.id)
-		if err != nil {
+		if err := mal.c.DeleteFirewallRule(ctx, unifiSite, ruleCache.id); err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall rule: %s", ruleName)
 		} else {
 			log.Info().Msgf("Deleted old firewall rule: %s", ruleName)
@@ -260,56 +458,25 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 		}
 	}
 
-	// Delete old firewall policies
 	for policyName, policyCache := range mal.firewallZonePolicy[ipv6] {
-		// Check if the policy index is higher than numGroups
-		parts := strings.Split(policyName, "-")
-		index, err := strconv.Atoi(parts[6])
-		if err != nil {
-			log.Warn().Msgf("Invalid policy index in name: %s", policyName)
+		zoneSrc, zoneDst, index, ok := policyIndex(policyName)
+		if ok && existing[index] && slices.Contains(unifiZoneSrc, zoneSrc) && slices.Contains(unifiZoneDst, zoneDst) {
 			continue
 		}
-
-		// Check if unifiZoneSrc contains the src of the existing policy
-		validSrc := slices.Contains(unifiZoneSrc, parts[4])
-		validDst := slices.Contains(unifiZoneDst, strings.ReplaceAll(parts[5], ">", ""))
-
-		// If isZoneBased is false or if targeted zones are out of scope
-		// then delete these policies independent of index
-		if mal.isZoneBased && validSrc && validDst && index < numGroups {
-			continue
-		}
-		// Delete the old firewall policy
-		err = mal.c.DeleteFirewallZonePolicy(ctx, unifiSite, policyCache.id)
-		if err != nil {
+		if err := mal.c.DeleteFirewallZonePolicy(ctx, unifiSite, policyCache.id); err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall policy: %s", policyName)
 		} else {
 			log.Info().Msgf("Deleted old firewall policy: %s", policyName)
 			delete(mal.firewallZonePolicy[ipv6], policyName)
 		}
 	}
+}
 
-	// Delete old firewall groups
-	for groupName, groupId := range mal.firewallGroups[ipv6] {
-		// Check if the group index is higher than numGroups
-		parts := strings.Split(groupName, "-")
-		index, err := strconv.Atoi(parts[4])
-		if err != nil {
-			log.Warn().Msgf("Invalid group index in name: %s", groupName)
-			continue
-		}
-		if index < numGroups {
-			continue
-		}
-		// Delete the old firewall group
-		err = mal.c.DeleteFirewallGroup(ctx, unifiSite, groupId)
-		if err != nil {
-			log.Error().Err(err).Msgf("Failed to delete old firewall group: %s", groupName)
-		} else {
-			log.Info().Msgf("Deleted old firewall group: %s", groupName)
-			delete(mal.firewallGroups[ipv6], groupName)
-		}
+func ipVersionStringFor(ipv6 bool) string {
+	if ipv6 {
+		return "ipv6"
 	}
+	return "ipv4"
 }
 
 func (mal *unifiAddrList) add(decision *models.Decision) {
@@ -328,11 +495,11 @@ func (mal *unifiAddrList) add(decision *models.Decision) {
 		return
 	}
 
-	if mal.blockedAddresses[ipv6][*decision.Value] {
+	if mal.isBlocked(ipv6, *decision.Value) {
 		log.Warn().Msgf("Address %s already present", *decision.Value)
 	} else {
 		mal.modified = true
-		mal.blockedAddresses[ipv6][*decision.Value] = true
+		mal.placeMember(ipv6, *decision.Value)
 	}
 }
 
@@ -352,9 +519,9 @@ func (mal *unifiAddrList) remove(decision *models.Decision) {
 		return
 	}
 
-	if mal.blockedAddresses[ipv6][*decision.Value] {
+	if mal.isBlocked(ipv6, *decision.Value) {
 		mal.modified = true
-		delete(mal.blockedAddresses[ipv6], *decision.Value)
+		mal.removeMember(ipv6, *decision.Value)
 	} else {
 		log.Warn().Msgf("%s not found in local cache", *decision.Value)
 	}

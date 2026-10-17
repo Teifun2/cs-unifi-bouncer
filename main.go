@@ -28,10 +28,20 @@ type ZoneCache struct {
 	id string
 }
 
+// FirewallGroupCache tracks one UniFi firewall group managed by the bouncer.
+// Membership is a set so placement/removal is O(1); touched records whether the
+// membership changed since it was last acknowledged by the controller, so an
+// unchanged group is never written again.
+type FirewallGroupCache struct {
+	id      string
+	members map[string]bool
+	touched bool
+}
+
 type unifiAddrList struct {
 	c                     unifi.Client
-	blockedAddresses      map[bool]map[string]bool
-	firewallGroups        map[bool]map[string]string
+	memberGroup           map[bool]map[string]string
+	firewallGroups        map[bool]map[string]*FirewallGroupCache
 	firewallRule          map[bool]map[string]FirewallRuleCache
 	firewallZonePolicy    map[bool]map[string]FirewallZonePolicyCache
 	modified              bool
