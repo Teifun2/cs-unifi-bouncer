@@ -9,6 +9,28 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// withUniFiReauthRetry retries a failed UniFi write once after reauthenticating on HTTP 401.
+func (mal *unifiAddrList) withUniFiReauthRetry(resourceType, resourceName string, operation func() error) error {
+	err := operation()
+	if err == nil || !strings.Contains(err.Error(), "Server error (401)") {
+		return err
+	}
+
+	log.Warn().Err(err).Str("type", resourceType).Str("name", resourceName).Msg("UniFi session unauthorized; reconnecting and retrying once")
+	refreshed, authErr := dial()
+	if authErr != nil {
+		log.Error().Err(authErr).Str("type", resourceType).Str("name", resourceName).Msg("UniFi reauthentication failed")
+		return err
+	}
+	mal.c = refreshed
+
+	err = operation()
+	if err == nil {
+		log.Info().Str("type", resourceType).Str("name", resourceName).Msg("UniFi reauthentication and retry succeeded")
+	}
+	return err
+}
+
 // postFirewallRule creates or updates a firewall rule in the UniFi controller.
 // The rule will drop all traffic from the specified source firewall group IDs.
 //
@@ -53,12 +75,16 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 	var err error
 	var newFirewallRule *unifi.FirewallRule
 
-	if ID != "" {
-		firewallRule.ID = ID
-		_, err = mal.c.UpdateFirewallRule(ctx, unifiSite, firewallRule)
-	} else {
-		newFirewallRule, err = mal.c.CreateFirewallRule(ctx, unifiSite, firewallRule)
-	}
+	err = mal.withUniFiReauthRetry("firewall rule", ruleName, func() error {
+		if ID != "" {
+			firewallRule.ID = ID
+			_, updateErr := mal.c.UpdateFirewallRule(ctx, unifiSite, firewallRule)
+			return updateErr
+		}
+		var createErr error
+		newFirewallRule, createErr = mal.c.CreateFirewallRule(ctx, unifiSite, firewallRule)
+		return createErr
+	})
 
 	if err != nil {
 		log.Fatal().Err(err).Msgf("Failed to post firewall rule: %v", firewallRule)
@@ -110,12 +136,16 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 	var err error
 	var newFirewallZonePolicy *unifi.FirewallZonePolicy
 
-	if ID != "" {
-		firewallZonePolicy.ID = ID
-		_, err = mal.c.UpdateFirewallZonePolicy(ctx, unifiSite, firewallZonePolicy)
-	} else {
-		newFirewallZonePolicy, err = mal.c.CreateFirewallZonePolicy(ctx, unifiSite, firewallZonePolicy)
-	}
+	err = mal.withUniFiReauthRetry("firewall policy", policyName, func() error {
+		if ID != "" {
+			firewallZonePolicy.ID = ID
+			_, updateErr := mal.c.UpdateFirewallZonePolicy(ctx, unifiSite, firewallZonePolicy)
+			return updateErr
+		}
+		var createErr error
+		newFirewallZonePolicy, createErr = mal.c.CreateFirewallZonePolicy(ctx, unifiSite, firewallZonePolicy)
+		return createErr
+	})
 
 	if err != nil {
 		log.Fatal().Err(err).Msgf("Failed to post firewall policy: %v", firewallZonePolicy)
@@ -156,33 +186,16 @@ func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, grou
 	var err error
 	var newGroup *unifi.FirewallGroup
 
-	if ID != "" {
-		group.ID = ID
-		_, err = mal.c.UpdateFirewallGroup(ctx, unifiSite, group)
-	} else {
-		newGroup, err = mal.c.CreateFirewallGroup(ctx, unifiSite, group)
-	}
-
-
-	// UniFi can expire its login session while the bouncer is running.
-	// Only retry the observed HTTP 401, once, with a new client.
-	if err != nil && strings.Contains(err.Error(), "Server error (401)") {
-		log.Warn().Err(err).Str("group", groupName).Msg("UniFi session unauthorized; reconnecting and retrying once")
-		refreshed, authErr := dial()
-		if authErr != nil {
-			log.Error().Err(authErr).Msg("UniFi reauthentication failed")
-		} else {
-			mal.c = refreshed
-			if ID != "" {
-				_, err = mal.c.UpdateFirewallGroup(ctx, unifiSite, group)
-			} else {
-				newGroup, err = mal.c.CreateFirewallGroup(ctx, unifiSite, group)
-			}
-			if err == nil {
-				log.Info().Str("group", groupName).Msg("UniFi reauthentication and firewall-group retry succeeded")
-			}
+	err = mal.withUniFiReauthRetry("firewall group", groupName, func() error {
+		if ID != "" {
+			group.ID = ID
+			_, updateErr := mal.c.UpdateFirewallGroup(ctx, unifiSite, group)
+			return updateErr
 		}
-	}
+		var createErr error
+		newGroup, createErr = mal.c.CreateFirewallGroup(ctx, unifiSite, group)
+		return createErr
+	})
 
 	if err != nil {
 		// If updating and got "not found", it means no changes were needed (UniFi returns empty data)
