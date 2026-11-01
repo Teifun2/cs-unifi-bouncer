@@ -58,11 +58,19 @@ func testSSHConnection() error {
 // cleanupWindow returns the [from, to] time range (unix millis) to clean up.
 // The window always reaches back at least twice the cleanup interval so that
 // consecutive runs overlap (cleanup is idempotent), and further back to the
-// last successful run (minus one interval) if earlier runs failed.
+// last successful run (minus one interval) if earlier runs failed. Without a
+// previous successful run (e.g. after a restart) it reaches back
+// startupCleanupLookback to catch entries left over from earlier runs.
+const startupCleanupLookback = 24 * time.Hour
+
 func cleanupWindow(now, lastSuccess time.Time, lookbackMinutes int) (int64, int64) {
 	interval := time.Duration(lookbackMinutes) * time.Minute
 	from := now.Add(-2 * interval)
-	if !lastSuccess.IsZero() && lastSuccess.Add(-interval).Before(from) {
+	if lastSuccess.IsZero() {
+		if now.Add(-startupCleanupLookback).Before(from) {
+			from = now.Add(-startupCleanupLookback)
+		}
+	} else if lastSuccess.Add(-interval).Before(from) {
 		from = lastSuccess.Add(-interval)
 	}
 	return from.UnixMilli(), now.UnixMilli()
