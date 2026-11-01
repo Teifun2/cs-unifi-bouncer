@@ -93,17 +93,6 @@ The bouncer configuration is made via environment variables:
 | `ENABLE_METRICS`              | Enable reporting of remediation metrics (blocked requests and active decisions) to CrowdSec using UniFi traffic flows.                          | `false`                 |          ❌           |
 | `CROWDSEC_METRICS_MINUTES`    | How often (in minutes) to poll UniFi for new traffic flows and send metrics back to CrowdSec.                                                   | `15`                    |          ❌           |
 
-## Metrics
-
-When `ENABLE_METRICS=true`, the bouncer reports remediation metrics to CrowdSec every `CROWDSEC_METRICS_MINUTES`:
-
-| Metric             | Unit      | Description                                                                 |
-| ------------------ | --------- | --------------------------------------------------------------------------- |
-| `dropped`          | `request` | Blocked traffic flows attributed to the bouncer, split by `ip_type`.        |
-| `active_decisions` | `ip`      | Addresses currently blocked by the bouncer, split by `ip_type`.             |
-
-`dropped` is counted from the UniFi traffic flows (Insights → Flows) blocked by bouncer policies, so traffic flow retention must cover at least the polling interval. `processed` is not reported because the bouncer only creates drop policies and therefore cannot observe traffic that bypassed a decision.
-
 # Troubleshooting
 
 ## MongoDB CPU Overload
