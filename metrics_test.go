@@ -25,8 +25,9 @@ func TestBuildMetricsPayloadIsValid(t *testing.T) {
 
 	payload := mc.buildMetricsPayload(1900, metricCounts{ipv4: 12, ipv6: 3})
 
-	// Validate runs the same payload validation as the Local API; in particular
-	// it rejects metric items without a "unit" (crowdsecurity/crowdsec#4409).
+	// Validate is the go-swagger generated validation from the CrowdSec SDK and is
+	// the same check the Local API runs; in particular it rejects metric items
+	// without a "unit" (crowdsecurity/crowdsec#4409).
 	if err := payload.Validate(strfmt.Default); err != nil {
 		t.Fatalf("metrics payload should be accepted by LAPI validation: %v", err)
 	}
