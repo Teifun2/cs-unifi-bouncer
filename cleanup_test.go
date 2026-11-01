@@ -8,7 +8,7 @@ import (
 func TestCleanupWindowOverlaps(t *testing.T) {
 	now := time.Now()
 	from, to := cleanupWindow(now, time.Time{}, 30)
-	if to != now.UnixMilli() || from != now.Add(-startupCleanupLookback).UnixMilli() {
+	if to != now.UnixMilli() || from != 0 {
 		t.Fatalf("unexpected window %d-%d", from, to)
 	}
 	from, _ = cleanupWindow(now, now.Add(-30*time.Minute), 30)

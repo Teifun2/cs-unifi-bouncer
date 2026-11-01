@@ -104,6 +104,15 @@ func main() {
 		defer cleanupTimer.Stop()
 		cleanupChan = cleanupTimer.C
 		log.Info().Msgf("Audit log cleanup will run every %d minutes", unifiLogCleanupMinutes)
+
+		// Initial cleanup without a lower time bound to remove old leftover entries
+		log.Info().Msg("Running initial audit log cleanup for all entries...")
+		startedAt := time.Now()
+		if err := cleanupBouncerAuditEntries(unifiLogCleanupMinutes, lastCleanupSuccess); err != nil {
+			log.Warn().Err(err).Msg("Initial audit log cleanup failed (non-fatal)")
+		} else {
+			lastCleanupSuccess = startedAt
+		}
 	}
 
 	// Timer for metrics collection
