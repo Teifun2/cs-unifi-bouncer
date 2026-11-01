@@ -32,19 +32,79 @@ func TestBuildMetricsPayloadIsValid(t *testing.T) {
 		t.Fatalf("metrics payload should be accepted by LAPI validation: %v", err)
 	}
 
+	if len(payload.RemediationComponents) != 1 {
+		t.Fatalf("expected 1 remediation component, got %d", len(payload.RemediationComponents))
+	}
+	rc := payload.RemediationComponents[0]
+	if rc.Name != "cs-unifi-bouncer" {
+		t.Fatalf("remediation component name = %q, want %q", rc.Name, "cs-unifi-bouncer")
+	}
+	if rc.Type != "daemon bouncer" {
+		t.Fatalf("remediation component type = %q, want %q", rc.Type, "daemon bouncer")
+	}
+	if rc.Version == nil || *rc.Version != "test-version" {
+		t.Fatalf("remediation component version = %v, want %q", rc.Version, "test-version")
+	}
+	if rc.UtcStartupTimestamp == nil || *rc.UtcStartupTimestamp != 900 {
+		t.Fatalf("utc startup timestamp = %v, want 900", rc.UtcStartupTimestamp)
+	}
+	if len(rc.Metrics) != 1 {
+		t.Fatalf("expected 1 metrics entry, got %d", len(rc.Metrics))
+	}
+	metrics := rc.Metrics[0]
+	if metrics.Meta == nil {
+		t.Fatal("metrics meta is nil")
+	}
+	if metrics.Meta.UtcNowTimestamp == nil || *metrics.Meta.UtcNowTimestamp != 1900 {
+		t.Fatalf("utc now timestamp = %v, want 1900", metrics.Meta.UtcNowTimestamp)
+	}
+	if metrics.Meta.WindowSizeSeconds == nil || *metrics.Meta.WindowSizeSeconds != 900 {
+		t.Fatalf("window size = %v, want 900", metrics.Meta.WindowSizeSeconds)
+	}
+	if len(metrics.Items) != 4 {
+		t.Fatalf("expected 4 metric items, got %d", len(metrics.Items))
+	}
+
+	assertMetricItem(t, metrics.Items, "dropped", "ipv4", 12, "request", "ban")
+	assertMetricItem(t, metrics.Items, "dropped", "ipv6", 3, "request", "ban")
+	assertMetricItem(t, metrics.Items, "active_decisions", "ipv4", 2, "ip", "")
+	assertMetricItem(t, metrics.Items, "active_decisions", "ipv6", 1, "ip", "")
+}
+
+func TestBuildMetricsPayloadWithNoCounts(t *testing.T) {
+	mc := &metricsCollector{
+		mal: &unifiAddrList{
+			blockedAddresses: map[bool]map[string]bool{false: {}, true: {}},
+		},
+		lastPollTime: 1000,
+		startupTime:  900,
+		version:      "test-version",
+		osName:       "linux",
+		osVersion:    "test",
+	}
+
+	payload := mc.buildMetricsPayload(1900, metricCounts{})
+	if err := payload.Validate(strfmt.Default); err != nil {
+		t.Fatalf("empty metrics payload should be accepted by LAPI validation: %v", err)
+	}
+	if len(payload.RemediationComponents) != 1 || len(payload.RemediationComponents[0].Metrics) != 1 {
+		t.Fatal("unexpected empty payload structure")
+	}
+
 	items := payload.RemediationComponents[0].Metrics[0].Items
 	if len(items) != 4 {
 		t.Fatalf("expected 4 metric items, got %d", len(items))
 	}
-
-	assertMetricItem(t, items, metricDropped, ipTypeIPv4, 12, metricUnitRequest)
-	assertMetricItem(t, items, metricDropped, ipTypeIPv6, 3, metricUnitRequest)
-	assertMetricItem(t, items, metricActiveDecisions, ipTypeIPv4, 2, metricUnitIP)
-	assertMetricItem(t, items, metricActiveDecisions, ipTypeIPv6, 1, metricUnitIP)
+	for _, item := range items {
+		if item.Value == nil || *item.Value != 0 {
+			t.Fatalf("metric %v has value %v, want 0", item.Name, item.Value)
+		}
+	}
 }
 
 func TestAddBlockedFlow(t *testing.T) {
-	bouncerIPv4 := unifi.TrafficFlowPolicy{Name: "cs-unifi-bouncer-ipv4-External->Internal-0"}
+	bouncerIPv4a := unifi.TrafficFlowPolicy{Name: "cs-unifi-bouncer-ipv4-External->Internal-0"}
+	bouncerIPv4b := unifi.TrafficFlowPolicy{Name: "cs-unifi-bouncer-ipv4-External->Vpn-0"}
 	bouncerIPv6 := unifi.TrafficFlowPolicy{Name: "cs-unifi-bouncer-ipv6-External->Internal-0"}
 	otherPolicy := unifi.TrafficFlowPolicy{Name: "Allow Established Sessions"}
 
@@ -56,7 +116,7 @@ func TestAddBlockedFlow(t *testing.T) {
 	}{
 		{
 			name:     "blocked by bouncer ipv4 policy",
-			flow:     unifi.TrafficFlow{Action: "blocked", Policies: []unifi.TrafficFlowPolicy{otherPolicy, bouncerIPv4}},
+			flow:     unifi.TrafficFlow{Action: "blocked", Policies: []unifi.TrafficFlowPolicy{otherPolicy, bouncerIPv4a}},
 			wantIPv4: 1,
 		},
 		{
@@ -66,15 +126,24 @@ func TestAddBlockedFlow(t *testing.T) {
 		},
 		{
 			name: "allowed flow is not counted",
-			flow: unifi.TrafficFlow{Action: "allowed", Policies: []unifi.TrafficFlowPolicy{bouncerIPv4}},
+			flow: unifi.TrafficFlow{Action: "allowed", Policies: []unifi.TrafficFlowPolicy{bouncerIPv4a}},
 		},
 		{
 			name: "blocked by another policy is not counted",
 			flow: unifi.TrafficFlow{Action: "blocked", Policies: []unifi.TrafficFlowPolicy{otherPolicy}},
 		},
 		{
+			name: "blocked flow with no policies is not counted",
+			flow: unifi.TrafficFlow{Action: "blocked"},
+		},
+		{
 			name:     "flow matching several bouncer policies is counted once",
-			flow:     unifi.TrafficFlow{Action: "blocked", Policies: []unifi.TrafficFlowPolicy{bouncerIPv4, bouncerIPv6}},
+			flow:     unifi.TrafficFlow{Action: "blocked", Policies: []unifi.TrafficFlowPolicy{bouncerIPv4a, bouncerIPv4b}},
+			wantIPv4: 1,
+		},
+		{
+			name:     "flow matching bouncer and non-bouncer policies is counted once",
+			flow:     unifi.TrafficFlow{Action: "blocked", Policies: []unifi.TrafficFlowPolicy{otherPolicy, bouncerIPv4a, bouncerIPv4b}},
 			wantIPv4: 1,
 		},
 	}
@@ -92,20 +161,31 @@ func TestAddBlockedFlow(t *testing.T) {
 
 func TestBouncerPolicyIPType(t *testing.T) {
 	tests := []struct {
-		name   string
-		policy string
-		want   string
-		ok     bool
+		name     string
+		policies []unifi.TrafficFlowPolicy
+		want     string
+		ok       bool
 	}{
-		{name: "ipv4", policy: "cs-unifi-bouncer-ipv4-External->Internal-0", want: ipTypeIPv4, ok: true},
-		{name: "ipv6", policy: "cs-unifi-bouncer-ipv6-External->Internal-0", want: ipTypeIPv6, ok: true},
-		{name: "legacy rule", policy: "cs-unifi-bouncer-ipv4-0", want: ipTypeIPv4, ok: true},
-		{name: "unrelated policy", policy: "Guest Network", ok: false},
+		{name: "ipv4", policies: []unifi.TrafficFlowPolicy{{Name: "cs-unifi-bouncer-ipv4-External->Internal-0"}}, want: "ipv4", ok: true},
+		{name: "ipv6", policies: []unifi.TrafficFlowPolicy{{Name: "cs-unifi-bouncer-ipv6-External->Internal-0"}}, want: "ipv6", ok: true},
+		{name: "legacy ipv4 rule", policies: []unifi.TrafficFlowPolicy{{Name: "cs-unifi-bouncer-ipv4-0"}}, want: "ipv4", ok: true},
+		{name: "legacy ipv6 rule", policies: []unifi.TrafficFlowPolicy{{Name: "cs-unifi-bouncer-ipv6-0"}}, want: "ipv6", ok: true},
+		{name: "unrelated policy", policies: []unifi.TrafficFlowPolicy{{Name: "Guest Network"}}, ok: false},
+		{name: "empty policy name", policies: []unifi.TrafficFlowPolicy{{Name: ""}}, ok: false},
+		{
+			name: "unrelated policy before bouncer policy",
+			policies: []unifi.TrafficFlowPolicy{
+				{Name: "Guest Network"},
+				{Name: "cs-unifi-bouncer-ipv4-0"},
+			},
+			want: "ipv4",
+			ok:   true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := bouncerPolicyIPType([]unifi.TrafficFlowPolicy{{Name: tt.policy}})
+			got, ok := bouncerPolicyIPType(tt.policies)
 			if ok != tt.ok || got != tt.want {
 				t.Fatalf("got (%q, %t), want (%q, %t)", got, ok, tt.want, tt.ok)
 			}
@@ -113,11 +193,11 @@ func TestBouncerPolicyIPType(t *testing.T) {
 	}
 }
 
-func assertMetricItem(t *testing.T, items []*models.MetricsDetailItem, name, ipType string, wantValue float64, wantUnit string) {
+func assertMetricItem(t *testing.T, items []*models.MetricsDetailItem, name, ipType string, wantValue float64, wantUnit, wantRemediation string) {
 	t.Helper()
 
 	for _, item := range items {
-		if item.Name == nil || *item.Name != name || item.Labels["ip_type"] != ipType {
+		if item == nil || item.Name == nil || *item.Name != name || item.Labels["ip_type"] != ipType {
 			continue
 		}
 		if item.Unit == nil || *item.Unit != wantUnit {
@@ -125,6 +205,12 @@ func assertMetricItem(t *testing.T, items []*models.MetricsDetailItem, name, ipT
 		}
 		if item.Value == nil || *item.Value != wantValue {
 			t.Fatalf("metric %s/%s has value %v, want %v", name, ipType, item.Value, wantValue)
+		}
+		if item.Labels["origin"] == "" {
+			t.Fatalf("metric %s/%s has no origin label", name, ipType)
+		}
+		if wantRemediation != "" && item.Labels["remediation"] != wantRemediation {
+			t.Fatalf("metric %s/%s has remediation %q, want %q", name, ipType, item.Labels["remediation"], wantRemediation)
 		}
 		return
 	}

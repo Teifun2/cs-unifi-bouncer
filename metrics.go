@@ -159,6 +159,9 @@ func (mc *metricsCollector) buildMetricsPayload(now int64, dropped metricCounts)
 		ipv6: int64(len(mc.mal.blockedAddresses[true])),
 	}
 
+	// The bouncer does not retain the LAPI origin of each decision, so every
+	// metric is reported under the generic "crowdsec" origin. Per-origin
+	// breakdowns are therefore approximate (documented in README.md).
 	items := []*models.MetricsDetailItem{
 		newMetricItem(metricDropped, metricUnitRequest, float64(dropped.ipv4), models.MetricsLabels{
 			"origin":      "crowdsec",
