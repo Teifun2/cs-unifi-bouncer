@@ -64,8 +64,6 @@ func initConfig() {
 	viper.SetDefault("unifi_ipv4_start_rule_index", 22000)
 	viper.BindEnv("unifi_ipv6_start_rule_index")
 	viper.SetDefault("unifi_ipv6_start_rule_index", 27000)
-	viper.BindEnv("unifi_max_group_size")
-	viper.SetDefault("unifi_max_group_size", 10000)
 	viper.BindEnv("unifi_skip_tls_verify")
 	viper.SetDefault("unifi_skip_tls_verify", "false")
 	viper.BindEnv("unifi_logging")
