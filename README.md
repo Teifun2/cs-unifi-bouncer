@@ -90,8 +90,10 @@ The bouncer configuration is made via environment variables:
 | `UNIFI_LOG_CLEANUP_USER`      | SSH username for audit log cleanup (usually `root` for UDM devices)                                                                             | `root`                  |          ❌           |
 | `UNIFI_LOG_CLEANUP_PASSWORD`  | SSH password for audit log cleanup                                                                                                              | `none`                  | ✅ if cleanup enabled |
 | `UNIFI_LOG_CLEANUP_MINUTES`   | How often (in minutes) the audit log cleanup runs and how far back (in minutes) it removes audit log entries                                    | `30`                    |          ❌           |
-| `ENABLE_METRICS`              | Enable tracking and reporting of dropped requests metrics to CrowdSec using UniFi traffic flows.                                                | `false`                 |          ❌           |
+| `ENABLE_METRICS`              | Enable reporting of remediation metrics (blocked requests and active decisions) to CrowdSec using UniFi traffic flows.                          | `false`                 |          ❌           |
 | `CROWDSEC_METRICS_MINUTES`    | How often (in minutes) to poll UniFi for new traffic flows and send metrics back to CrowdSec.                                                   | `15`                    |          ❌           |
+
+> **Metrics origin:** the bouncer currently reports every remediation metric with `origin=crowdsec`. The original decision origin (`CAPI`, `cscli`, `lists:...`) is not tracked yet, so per-origin breakdowns in the CrowdSec Console are approximate.
 
 # Troubleshooting
 
