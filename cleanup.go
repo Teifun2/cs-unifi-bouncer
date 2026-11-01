@@ -55,12 +55,25 @@ func testSSHConnection() error {
 	return nil
 }
 
-func cleanupBouncerAuditEntries(lookbackMinutes int) error {
-	lookbackTime := time.Now().Add(-time.Duration(lookbackMinutes) * time.Minute).UnixMilli()
+// cleanupWindow returns the [from, to] time range (unix millis) to clean up.
+// The window always reaches back at least twice the cleanup interval so that
+// consecutive runs overlap (cleanup is idempotent), and further back to the
+// last successful run (minus one interval) if earlier runs failed.
+func cleanupWindow(now, lastSuccess time.Time, lookbackMinutes int) (int64, int64) {
+	interval := time.Duration(lookbackMinutes) * time.Minute
+	from := now.Add(-2 * interval)
+	if !lastSuccess.IsZero() && lastSuccess.Add(-interval).Before(from) {
+		from = lastSuccess.Add(-interval)
+	}
+	return from.UnixMilli(), now.UnixMilli()
+}
+
+func cleanupBouncerAuditEntries(lookbackMinutes int, lastSuccess time.Time) error {
+	from, to := cleanupWindow(time.Now(), lastSuccess, lookbackMinutes)
 
 	mongoCmd := fmt.Sprintf(
-		`mongo ace --port 27117 --quiet --eval 'db.admin_activity_log.updateMany({ "meta.display_property_value": { $regex: "^cs-unifi-bouncer-" }, time: { $gt: %d } }, { $set: { updates: [ { property_path: "description", new_value: "Updated from bouncer" } ] } })'`,
-		lookbackTime,
+		`mongo ace --port 27117 --quiet --eval 'db.admin_activity_log.updateMany({ "meta.display_property_value": { $regex: "^cs-unifi-bouncer-" }, time: { $gte: %d, $lte: %d } }, { $set: { updates: [ { property_path: "description", new_value: "Updated from bouncer" } ] } })'`,
+		from, to,
 	)
 
 	log.Debug().Msgf("Executing cleanup command on host %s", sshHost)

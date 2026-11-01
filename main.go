@@ -98,6 +98,7 @@ func main() {
 	// Timer for periodic audit log cleanup
 	var cleanupTimer *time.Ticker
 	var cleanupChan <-chan time.Time
+	var lastCleanupSuccess time.Time
 	if unifiLogCleanup {
 		cleanupTimer = time.NewTicker(time.Duration(unifiLogCleanupMinutes) * time.Minute)
 		defer cleanupTimer.Stop()
@@ -148,8 +149,11 @@ func main() {
 				// Periodically clean up audit log entries
 				if unifiLogCleanup {
 					log.Debug().Msg("Running scheduled audit log cleanup...")
-					if err := cleanupBouncerAuditEntries(unifiLogCleanupMinutes); err != nil {
+					startedAt := time.Now()
+					if err := cleanupBouncerAuditEntries(unifiLogCleanupMinutes, lastCleanupSuccess); err != nil {
 						log.Warn().Err(err).Msg("Scheduled audit log cleanup failed (non-fatal)")
+					} else {
+						lastCleanupSuccess = startedAt
 					}
 				}
 			case <-metricsChan:
