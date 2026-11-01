@@ -23,6 +23,14 @@ const (
 	ipTypeIPv6 = "ipv6"
 )
 
+type trafficFlowsGetter interface {
+	GetTrafficFlows(ctx context.Context, site string, req *unifi.TrafficFlowsRequest) (*unifi.TrafficFlowsResponse, error)
+}
+
+type usageMetricsAdder interface {
+	Add(ctx context.Context, metrics *models.AllMetrics) (interface{}, *apiclient.Response, error)
+}
+
 type metricsCollector struct {
 	mal               *unifiAddrList
 	lastPollTimeMilli int64
@@ -31,6 +39,8 @@ type metricsCollector struct {
 	version           string
 	osName            string
 	osVersion         string
+	includeIPv6       bool
+	flowGetter        trafficFlowsGetter
 }
 
 // metricCounts holds the number of blocked flows or active decisions per IP family.
@@ -50,25 +60,39 @@ func newMetricsCollector(mal *unifiAddrList, version string) *metricsCollector {
 		version:           version,
 		osName:            osName,
 		osVersion:         osVersion,
+		includeIPv6:       useIPV6,
+		flowGetter:        mal.c,
 	}
 }
 
 func (mc *metricsCollector) pollAndSendMetrics(ctx context.Context, api *apiclient.ApiClient) {
+	mc.pollAndSend(ctx, api.UsageMetrics)
+}
+
+func (mc *metricsCollector) pollAndSend(ctx context.Context, adder usageMetricsAdder) {
 	nowTime := time.Now()
 	nowMilli := nowTime.UnixMilli()
 	now := nowTime.Unix()
 
 	dropped, err := mc.countDroppedFlows(ctx, nowMilli)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Warn().Err(err).Msg("Failed to fetch traffic flows for metrics from UniFi")
+		// active_decisions does not depend on traffic flows, so report it
+		// anyway. Keep the poll cursor unchanged so the dropped window is
+		// retried on the next run.
+		if sendErr := mc.send(ctx, adder, mc.buildMetricsPayload(now, nil)); sendErr != nil {
+			log.Warn().Err(sendErr).Msg("failed to send active decisions metrics")
+			return
+		}
+		log.Debug().Msg("active decisions metrics successfully sent without traffic flows")
 		return
 	}
 	log.Info().Msgf("Found %d blocked IPv4 and %d blocked IPv6 traffic flows in UniFi, reporting to CrowdSec", dropped.ipv4, dropped.ipv6)
 
-	payload := mc.buildMetricsPayload(now, dropped)
-
-	_, _, err = api.UsageMetrics.Add(ctx, payload)
-	if err != nil {
+	if err := mc.send(ctx, adder, mc.buildMetricsPayload(now, &dropped)); err != nil {
 		log.Warn().Err(err).Msg("failed to send metrics")
 		return
 	}
@@ -76,6 +100,11 @@ func (mc *metricsCollector) pollAndSendMetrics(ctx context.Context, api *apiclie
 	mc.lastPollTimeMilli = nowMilli
 	mc.lastPollTime = now
 	log.Debug().Msg("usage metrics successfully sent")
+}
+
+func (mc *metricsCollector) send(ctx context.Context, adder usageMetricsAdder, payload *models.AllMetrics) error {
+	_, _, err := adder.Add(ctx, payload)
+	return err
 }
 
 // countDroppedFlows pages through the UniFi traffic flows recorded since the last
@@ -91,8 +120,13 @@ func (mc *metricsCollector) countDroppedFlows(ctx context.Context, toMilli int64
 
 	var counts metricCounts
 
+	getter := mc.flowGetter
+	if getter == nil {
+		getter = mc.mal.c
+	}
+
 	for {
-		flows, err := mc.mal.c.GetTrafficFlows(ctx, unifiSite, req)
+		flows, err := getter.GetTrafficFlows(ctx, unifiSite, req)
 		if err != nil {
 			return metricCounts{}, err
 		}
@@ -148,40 +182,43 @@ func bouncerPolicyIPType(policies []unifi.TrafficFlowPolicy) (string, bool) {
 
 // buildMetricsPayload builds the remediation component metrics expected by the Local API.
 // See https://docs.crowdsec.net/docs/next/contributing/specs/bouncer_metrics_specs
-func (mc *metricsCollector) buildMetricsPayload(now int64, dropped metricCounts) *models.AllMetrics {
+func (mc *metricsCollector) buildMetricsPayload(now int64, dropped *metricCounts) *models.AllMetrics {
 	window := now - mc.lastPollTime
 	if window < 0 {
 		window = 0
 	}
 
-	active := metricCounts{
-		ipv4: int64(len(mc.mal.blockedAddresses[false])),
-		ipv6: int64(len(mc.mal.blockedAddresses[true])),
-	}
-
 	// The bouncer does not retain the LAPI origin of each decision, so every
 	// metric is reported under the generic "crowdsec" origin. Per-origin
 	// breakdowns are therefore approximate (documented in README.md).
-	items := []*models.MetricsDetailItem{
-		newMetricItem(metricDropped, metricUnitRequest, float64(dropped.ipv4), models.MetricsLabels{
+	// IPv6 items are omitted entirely when IPv6 support is disabled.
+	items := make([]*models.MetricsDetailItem, 0, 4)
+
+	if dropped != nil {
+		items = append(items, newMetricItem(metricDropped, metricUnitRequest, float64(dropped.ipv4), models.MetricsLabels{
 			"origin":      "crowdsec",
 			"remediation": "ban",
 			"ip_type":     ipTypeIPv4,
-		}),
-		newMetricItem(metricDropped, metricUnitRequest, float64(dropped.ipv6), models.MetricsLabels{
-			"origin":      "crowdsec",
-			"remediation": "ban",
-			"ip_type":     ipTypeIPv6,
-		}),
-		// active_decisions is a gauge and must use the "ip" unit (see crowdsecurity/crowdsec#4409).
-		newMetricItem(metricActiveDecisions, metricUnitIP, float64(active.ipv4), models.MetricsLabels{
-			"origin":  "crowdsec",
-			"ip_type": ipTypeIPv4,
-		}),
-		newMetricItem(metricActiveDecisions, metricUnitIP, float64(active.ipv6), models.MetricsLabels{
+		}))
+		if mc.includeIPv6 {
+			items = append(items, newMetricItem(metricDropped, metricUnitRequest, float64(dropped.ipv6), models.MetricsLabels{
+				"origin":      "crowdsec",
+				"remediation": "ban",
+				"ip_type":     ipTypeIPv6,
+			}))
+		}
+	}
+
+	// active_decisions is a gauge and must use the "ip" unit (see crowdsecurity/crowdsec#4409).
+	items = append(items, newMetricItem(metricActiveDecisions, metricUnitIP, float64(len(mc.mal.blockedAddresses[false])), models.MetricsLabels{
+		"origin":  "crowdsec",
+		"ip_type": ipTypeIPv4,
+	}))
+	if mc.includeIPv6 {
+		items = append(items, newMetricItem(metricActiveDecisions, metricUnitIP, float64(len(mc.mal.blockedAddresses[true])), models.MetricsLabels{
 			"origin":  "crowdsec",
 			"ip_type": ipTypeIPv6,
-		}),
+		}))
 	}
 
 	// "processed" is deliberately not reported: the bouncer only creates drop

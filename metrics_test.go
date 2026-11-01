@@ -1,29 +1,20 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/crowdsecurity/crowdsec/pkg/apiclient"
 	"github.com/crowdsecurity/crowdsec/pkg/models"
 	"github.com/filipowm/go-unifi/unifi"
 	"github.com/go-openapi/strfmt"
 )
 
 func TestBuildMetricsPayloadIsValid(t *testing.T) {
-	mc := &metricsCollector{
-		mal: &unifiAddrList{
-			blockedAddresses: map[bool]map[string]bool{
-				false: {"203.0.113.10": true, "198.51.100.20": true},
-				true:  {"2001:db8::1": true},
-			},
-		},
-		lastPollTime: 1000,
-		startupTime:  900,
-		version:      "test-version",
-		osName:       "linux",
-		osVersion:    "test",
-	}
+	mc := newTestMetricsCollector()
 
-	payload := mc.buildMetricsPayload(1900, metricCounts{ipv4: 12, ipv6: 3})
+	payload := mc.buildMetricsPayload(1900, &metricCounts{ipv4: 12, ipv6: 3})
 
 	// Validate is the go-swagger generated validation from the CrowdSec SDK and is
 	// the same check the Local API runs; in particular it rejects metric items
@@ -72,18 +63,10 @@ func TestBuildMetricsPayloadIsValid(t *testing.T) {
 }
 
 func TestBuildMetricsPayloadWithNoCounts(t *testing.T) {
-	mc := &metricsCollector{
-		mal: &unifiAddrList{
-			blockedAddresses: map[bool]map[string]bool{false: {}, true: {}},
-		},
-		lastPollTime: 1000,
-		startupTime:  900,
-		version:      "test-version",
-		osName:       "linux",
-		osVersion:    "test",
-	}
+	mc := newTestMetricsCollector()
+	mc.mal.blockedAddresses = map[bool]map[string]bool{false: {}, true: {}}
 
-	payload := mc.buildMetricsPayload(1900, metricCounts{})
+	payload := mc.buildMetricsPayload(1900, &metricCounts{})
 	if err := payload.Validate(strfmt.Default); err != nil {
 		t.Fatalf("empty metrics payload should be accepted by LAPI validation: %v", err)
 	}
@@ -99,6 +82,95 @@ func TestBuildMetricsPayloadWithNoCounts(t *testing.T) {
 		if item.Value == nil || *item.Value != 0 {
 			t.Fatalf("metric %v has value %v, want 0", item.Name, item.Value)
 		}
+	}
+}
+
+func TestBuildMetricsPayloadWithoutIPv6(t *testing.T) {
+	mc := newTestMetricsCollector()
+	mc.includeIPv6 = false
+
+	payload := mc.buildMetricsPayload(1900, &metricCounts{ipv4: 12, ipv6: 3})
+	if err := payload.Validate(strfmt.Default); err != nil {
+		t.Fatalf("IPv4-only payload should be accepted by LAPI validation: %v", err)
+	}
+
+	items := payload.RemediationComponents[0].Metrics[0].Items
+	if len(items) != 2 {
+		t.Fatalf("expected 2 IPv4-only metric items, got %d", len(items))
+	}
+	assertMetricItem(t, items, "dropped", "ipv4", 12, "request", "ban")
+	assertMetricItem(t, items, "active_decisions", "ipv4", 2, "ip", "")
+	for _, item := range items {
+		if item != nil && item.Labels["ip_type"] == "ipv6" {
+			t.Fatalf("IPv6 metric item should not be present: %v", item.Name)
+		}
+	}
+}
+
+func TestBuildMetricsPayloadWithoutDropped(t *testing.T) {
+	mc := newTestMetricsCollector()
+
+	payload := mc.buildMetricsPayload(1900, nil)
+	if err := payload.Validate(strfmt.Default); err != nil {
+		t.Fatalf("active-decisions-only payload should be accepted by LAPI validation: %v", err)
+	}
+
+	items := payload.RemediationComponents[0].Metrics[0].Items
+	if len(items) != 2 {
+		t.Fatalf("expected 2 active-decisions items, got %d", len(items))
+	}
+	assertMetricItem(t, items, "active_decisions", "ipv4", 2, "ip", "")
+	assertMetricItem(t, items, "active_decisions", "ipv6", 1, "ip", "")
+	assertNoMetricItem(t, items, "dropped")
+}
+
+func TestPollAndSendMetricsSendsActiveDecisionsOnFlowFailure(t *testing.T) {
+	mc := newTestMetricsCollector()
+	mc.lastPollTime = 1000
+	mc.lastPollTimeMilli = 1000000
+	mc.flowGetter = failingFlowGetter{}
+
+	adder := &recordingAdder{}
+	mc.pollAndSend(context.Background(), adder)
+
+	if mc.lastPollTime != 1000 || mc.lastPollTimeMilli != 1000000 {
+		t.Fatalf("poll cursor advanced on flow failure: got (%d, %d), want (1000, 1000000)", mc.lastPollTime, mc.lastPollTimeMilli)
+	}
+	if len(adder.payloads) != 1 {
+		t.Fatalf("expected 1 metrics payload, got %d", len(adder.payloads))
+	}
+	payload := adder.payloads[0]
+	if err := payload.Validate(strfmt.Default); err != nil {
+		t.Fatalf("gauge-only payload should be accepted by LAPI validation: %v", err)
+	}
+
+	items := payload.RemediationComponents[0].Metrics[0].Items
+	if len(items) != 2 {
+		t.Fatalf("expected 2 active-decisions items, got %d", len(items))
+	}
+	assertMetricItem(t, items, "active_decisions", "ipv4", 2, "ip", "")
+	assertMetricItem(t, items, "active_decisions", "ipv6", 1, "ip", "")
+	assertNoMetricItem(t, items, "dropped")
+}
+
+func TestPollAndSendMetricsAdvancesCursorOnSuccess(t *testing.T) {
+	mc := newTestMetricsCollector()
+	mc.lastPollTime = 1000
+	mc.lastPollTimeMilli = 1000000
+	mc.flowGetter = emptyFlowGetter{}
+
+	adder := &recordingAdder{}
+	mc.pollAndSend(context.Background(), adder)
+
+	if mc.lastPollTime <= 1000 || mc.lastPollTimeMilli <= 1000000 {
+		t.Fatalf("poll cursor did not advance on success: got (%d, %d)", mc.lastPollTime, mc.lastPollTimeMilli)
+	}
+	if len(adder.payloads) != 1 {
+		t.Fatalf("expected 1 metrics payload, got %d", len(adder.payloads))
+	}
+	items := adder.payloads[0].RemediationComponents[0].Metrics[0].Items
+	if len(items) != 4 {
+		t.Fatalf("expected 4 metric items, got %d", len(items))
 	}
 }
 
@@ -193,6 +265,45 @@ func TestBouncerPolicyIPType(t *testing.T) {
 	}
 }
 
+func newTestMetricsCollector() *metricsCollector {
+	return &metricsCollector{
+		mal: &unifiAddrList{
+			blockedAddresses: map[bool]map[string]bool{
+				false: {"203.0.113.10": true, "198.51.100.20": true},
+				true:  {"2001:db8::1": true},
+			},
+		},
+		lastPollTime: 1000,
+		startupTime:  900,
+		version:      "test-version",
+		osName:       "linux",
+		osVersion:    "test",
+		includeIPv6:  true,
+	}
+}
+
+type failingFlowGetter struct{}
+
+func (failingFlowGetter) GetTrafficFlows(context.Context, string, *unifi.TrafficFlowsRequest) (*unifi.TrafficFlowsResponse, error) {
+	return nil, errors.New("traffic flows unavailable")
+}
+
+type emptyFlowGetter struct{}
+
+func (emptyFlowGetter) GetTrafficFlows(context.Context, string, *unifi.TrafficFlowsRequest) (*unifi.TrafficFlowsResponse, error) {
+	return &unifi.TrafficFlowsResponse{Data: []unifi.TrafficFlow{}, HasNext: false}, nil
+}
+
+type recordingAdder struct {
+	payloads []*models.AllMetrics
+	err      error
+}
+
+func (r *recordingAdder) Add(_ context.Context, metrics *models.AllMetrics) (interface{}, *apiclient.Response, error) {
+	r.payloads = append(r.payloads, metrics)
+	return nil, nil, r.err
+}
+
 func assertMetricItem(t *testing.T, items []*models.MetricsDetailItem, name, ipType string, wantValue float64, wantUnit, wantRemediation string) {
 	t.Helper()
 
@@ -216,4 +327,14 @@ func assertMetricItem(t *testing.T, items []*models.MetricsDetailItem, name, ipT
 	}
 
 	t.Fatalf("metric %s/%s not found", name, ipType)
+}
+
+func assertNoMetricItem(t *testing.T, items []*models.MetricsDetailItem, name string) {
+	t.Helper()
+
+	for _, item := range items {
+		if item != nil && item.Name != nil && *item.Name == name {
+			t.Fatalf("metric %q should not be present", name)
+		}
+	}
 }
