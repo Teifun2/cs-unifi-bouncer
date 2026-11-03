@@ -33,8 +33,10 @@ type fakeUnifi struct {
 	policyDeletes int
 	reorders      int
 
-	writeErr error
-	nextID   int
+	writeErr        error
+	ruleDeleteErr   error
+	policyDeleteErr error
+	nextID          int
 }
 
 func newFakeUnifi() *fakeUnifi {
@@ -129,6 +131,9 @@ func (f *fakeUnifi) UpdateFirewallRule(_ context.Context, _ string, r *unifi.Fir
 }
 
 func (f *fakeUnifi) DeleteFirewallRule(_ context.Context, _ string, id string) error {
+	if f.ruleDeleteErr != nil {
+		return f.ruleDeleteErr
+	}
 	for name, r := range f.rules {
 		if r.ID == id {
 			f.ruleDeletes++
@@ -166,6 +171,9 @@ func (f *fakeUnifi) UpdateFirewallZonePolicy(_ context.Context, _ string, p *uni
 }
 
 func (f *fakeUnifi) DeleteFirewallZonePolicy(_ context.Context, _ string, id string) error {
+	if f.policyDeleteErr != nil {
+		return f.policyDeleteErr
+	}
 	for name, p := range f.policies {
 		if p.ID == id {
 			f.policyDeletes++
@@ -528,5 +536,85 @@ func TestGroupsNeverExceedMaxSize(t *testing.T) {
 	}
 	if totalMembers(f) != 10 {
 		t.Fatalf("total members=%d, want 10", totalMembers(f))
+	}
+}
+
+// UniFi refuses to delete a group while a rule still references it. When the
+// rule delete fails, the group must be kept for the next reconciliation.
+func TestGroupDeletionWaitsForRuleRemoval(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	mal := loadTestState(f)
+
+	addresses := addressesFor(3)
+	for _, addr := range addresses {
+		mal.add(decision(addr))
+	}
+	flush(mal, false)
+
+	f.resetCounts()
+	f.ruleDeleteErr = errors.New("rule still referenced")
+	for _, addr := range addresses {
+		mal.remove(decision(addr))
+	}
+	flush(mal, false)
+
+	if f.groupDeletes != 0 {
+		t.Fatal("group delete attempted while the rule delete failed")
+	}
+	if _, exists := mal.firewallGroups[false]["cs-unifi-bouncer-ipv4-0"]; !exists {
+		t.Fatal("group should be kept for retry")
+	}
+
+	f.ruleDeleteErr = nil
+	mal.modified = true
+	flush(mal, false)
+
+	if f.ruleDeletes != 1 || f.groupDeletes != 1 {
+		t.Fatalf("retry deletes rules/groups=%d/%d, want 1/1", f.ruleDeletes, f.groupDeletes)
+	}
+}
+
+// Same ordering guarantee for zone-based policies: the policy must be gone
+// before the group is deleted.
+func TestGroupDeletionWaitsForPolicyRemoval(t *testing.T) {
+	testSettings(t, 3)
+	unifiZoneSrc = []string{"External"}
+	unifiZoneDst = []string{"Internal"}
+
+	f := newFakeUnifi()
+	f.zoneBased = true
+	f.zones = []unifi.FirewallZone{{ID: "z-ext", Name: "External"}, {ID: "z-int", Name: "Internal"}}
+	mal := loadTestState(f)
+
+	addresses := addressesFor(3)
+	for _, addr := range addresses {
+		mal.add(decision(addr))
+	}
+	flush(mal, false)
+	if f.policyCreates != 1 {
+		t.Fatalf("setup policy creates=%d, want 1", f.policyCreates)
+	}
+
+	f.resetCounts()
+	f.policyDeleteErr = errors.New("policy still referenced")
+	for _, addr := range addresses {
+		mal.remove(decision(addr))
+	}
+	flush(mal, false)
+
+	if f.groupDeletes != 0 {
+		t.Fatal("group delete attempted while the policy delete failed")
+	}
+	if _, exists := mal.firewallGroups[false]["cs-unifi-bouncer-ipv4-0"]; !exists {
+		t.Fatal("group should be kept for retry")
+	}
+
+	f.policyDeleteErr = nil
+	mal.modified = true
+	flush(mal, false)
+
+	if f.policyDeletes != 1 || f.groupDeletes != 1 {
+		t.Fatalf("retry deletes policies/groups=%d/%d, want 1/1", f.policyDeletes, f.groupDeletes)
 	}
 }

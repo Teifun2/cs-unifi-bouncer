@@ -398,7 +398,12 @@ func (mal *unifiAddrList) deleteFirewallGroup(ctx context.Context, ipv6 bool, gr
 	}
 
 	index, _ := groupIndex(groupName)
-	mal.deleteGroupRulesAndPolicies(ctx, ipv6, index)
+	// UniFi refuses to delete a group while a rule/policy still references it, so
+	// remove those first. If that fails, keep the group and retry next reconcile.
+	if !mal.deleteGroupRulesAndPolicies(ctx, ipv6, index) {
+		log.Warn().Msgf("Keeping firewall group %s: its rule/policy could not be deleted", groupName)
+		return
+	}
 
 	if group.id != "" {
 		if err := mal.c.DeleteFirewallGroup(ctx, unifiSite, group.id); err != nil {
@@ -412,8 +417,12 @@ func (mal *unifiAddrList) deleteFirewallGroup(ctx context.Context, ipv6 bool, gr
 }
 
 // deleteGroupRulesAndPolicies deletes every rule/policy that belongs to a group
-// index, regardless of whether the group was zone-based.
-func (mal *unifiAddrList) deleteGroupRulesAndPolicies(ctx context.Context, ipv6 bool, index int) {
+// index, regardless of whether the group was zone-based. It reports whether all
+// of them are gone; a caller must not delete the group while any remain, because
+// UniFi refuses to remove a group that is still referenced.
+func (mal *unifiAddrList) deleteGroupRulesAndPolicies(ctx context.Context, ipv6 bool, index int) bool {
+	allDeleted := true
+
 	if mal.isZoneBased {
 		for policyName, policyCache := range mal.firewallZonePolicy[ipv6] {
 			_, _, policyGroupIndex, ok := policyIndex(policyName)
@@ -422,23 +431,26 @@ func (mal *unifiAddrList) deleteGroupRulesAndPolicies(ctx context.Context, ipv6 
 			}
 			if err := mal.c.DeleteFirewallZonePolicy(ctx, unifiSite, policyCache.id); err != nil {
 				log.Error().Err(err).Msgf("Failed to delete old firewall policy: %s", policyName)
+				allDeleted = false
 			} else {
 				log.Info().Msgf("Deleted old firewall policy: %s", policyName)
 				delete(mal.firewallZonePolicy[ipv6], policyName)
 			}
 		}
-		return
+		return allDeleted
 	}
 
 	ruleName := fmt.Sprintf("cs-unifi-bouncer-%s-%d", ipVersionStringFor(ipv6), index)
 	if ruleCache, exists := mal.firewallRule[ipv6][ruleName]; exists {
 		if err := mal.c.DeleteFirewallRule(ctx, unifiSite, ruleCache.id); err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall rule: %s", ruleName)
+			allDeleted = false
 		} else {
 			log.Info().Msgf("Deleted old firewall rule: %s", ruleName)
 			delete(mal.firewallRule[ipv6], ruleName)
 		}
 	}
+	return allDeleted
 }
 
 // deleteOrphanRulesAndPolicies removes cached rules/policies whose group index no
