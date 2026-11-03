@@ -210,12 +210,12 @@ func (mc *metricsCollector) buildMetricsPayload(now int64, dropped *metricCounts
 	}
 
 	// active_decisions is a gauge and must use the "ip" unit (see crowdsecurity/crowdsec#4409).
-	items = append(items, newMetricItem(metricActiveDecisions, metricUnitIP, float64(len(mc.mal.blockedAddresses[false])), models.MetricsLabels{
+	items = append(items, newMetricItem(metricActiveDecisions, metricUnitIP, float64(mc.mal.activeDecisionCount(false)), models.MetricsLabels{
 		"origin":  "crowdsec",
 		"ip_type": ipTypeIPv4,
 	}))
 	if mc.includeIPv6 {
-		items = append(items, newMetricItem(metricActiveDecisions, metricUnitIP, float64(len(mc.mal.blockedAddresses[true])), models.MetricsLabels{
+		items = append(items, newMetricItem(metricActiveDecisions, metricUnitIP, float64(mc.mal.activeDecisionCount(true)), models.MetricsLabels{
 			"origin":  "crowdsec",
 			"ip_type": ipTypeIPv6,
 		}))
