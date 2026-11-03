@@ -249,6 +249,12 @@ func (mal *unifiAddrList) isBlocked(ipv6 bool, address string) bool {
 	return exists
 }
 
+// activeDecisionCount returns the number of blocked addresses for one family.
+// It backs the active_decisions metric without keeping a second membership set.
+func (mal *unifiAddrList) activeDecisionCount(ipv6 bool) int {
+	return len(mal.memberGroup[ipv6])
+}
+
 // placeMember assigns a newly blocked address to a group without touching the
 // controller. It reuses an existing non-full group, or creates a new one when
 // every group is full. The group is marked touched so the next reconciliation
