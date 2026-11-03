@@ -97,7 +97,7 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 	}
 }
 
-func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, policyName string, ipv6 bool, groupId string, srcZone string, dstZone string) {
+func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, policyName string, ipv6 bool, groupId string, index int, srcZone string, dstZone string) {
 	ipVersion := "IPV4"
 	if ipv6 {
 		ipVersion = "IPV6"
@@ -111,7 +111,7 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 		Enabled:             true,
 		Name:                policyName,
 		ConnectionStateType: "CUSTOM",
-		ConnectionStates:  []string{"NEW", "INVALID"},
+		ConnectionStates:    []string{"NEW", "INVALID"},
 		Protocol:            "all",
 		IPVersion:           ipVersion,
 		Logging:             unifiLogging,
@@ -154,7 +154,13 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 			firewallZonePolicy = newFirewallZonePolicy
 		}
 		log.Info().Msg("Firewall policy posted")
-		var firewallZonePolicyCache = FirewallZonePolicyCache{id: firewallZonePolicy.ID, groupId: groupId}
+		var firewallZonePolicyCache = FirewallZonePolicyCache{
+			id:      firewallZonePolicy.ID,
+			groupId: groupId,
+			index:   index,
+			zoneSrc: srcZone,
+			zoneDst: dstZone,
+		}
 		mal.firewallZonePolicy[ipv6][firewallZonePolicy.Name] = firewallZonePolicyCache
 	}
 }

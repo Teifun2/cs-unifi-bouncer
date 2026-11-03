@@ -66,9 +66,18 @@ func (f *fakeUnifi) IsFeatureEnabled(context.Context, string, string) (bool, err
 }
 
 func (f *fakeUnifi) ListFirewallGroup(context.Context, string) ([]unifi.FirewallGroup, error) {
-	out := make([]unifi.FirewallGroup, 0, len(f.groups))
-	for _, g := range f.groups {
-		out = append(out, cloneGroup(g))
+	names := make([]string, 0, len(f.groups))
+	for name := range f.groups {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		left, _ := groupIndex(names[i])
+		right, _ := groupIndex(names[j])
+		return left < right
+	})
+	out := make([]unifi.FirewallGroup, 0, len(names))
+	for _, name := range names {
+		out = append(out, cloneGroup(f.groups[name]))
 	}
 	return out, nil
 }
@@ -97,6 +106,17 @@ func (f *fakeUnifi) UpdateFirewallGroup(_ context.Context, _ string, g *unifi.Fi
 }
 
 func (f *fakeUnifi) DeleteFirewallGroup(_ context.Context, _ string, id string) error {
+	// UniFi refuses to delete a group while a rule/policy still references it.
+	for _, r := range f.rules {
+		if slices.Contains(r.SrcFirewallGroupIDs, id) {
+			return fmt.Errorf("group %s still referenced by rule %s", id, r.Name)
+		}
+	}
+	for _, p := range f.policies {
+		if p.Source.IPGroupID == id {
+			return fmt.Errorf("group %s still referenced by policy %s", id, p.Name)
+		}
+	}
 	for name, g := range f.groups {
 		if g.ID == id {
 			f.groupDeletes++
@@ -616,5 +636,169 @@ func TestGroupDeletionWaitsForPolicyRemoval(t *testing.T) {
 
 	if f.policyDeletes != 1 || f.groupDeletes != 1 {
 		t.Fatalf("retry deletes policies/groups=%d/%d, want 1/1", f.policyDeletes, f.groupDeletes)
+	}
+}
+
+// An interrupted older repartition can leave the same address in two groups.
+// Adoption must keep a single owner and rewrite the group that loses the copy,
+// otherwise removing that address later only clears one of the two groups.
+func TestDuplicateAdoptedMemberHasSingleOwner(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	f.groups["cs-unifi-bouncer-ipv4-0"] = unifi.FirewallGroup{
+		ID:           "g0",
+		Name:         "cs-unifi-bouncer-ipv4-0",
+		GroupType:    "address-group",
+		GroupMembers: []string{"10.0.0.1", "10.0.0.2"},
+	}
+	f.groups["cs-unifi-bouncer-ipv4-1"] = unifi.FirewallGroup{
+		ID:           "g1",
+		Name:         "cs-unifi-bouncer-ipv4-1",
+		GroupType:    "address-group",
+		GroupMembers: []string{"10.0.0.2", "10.0.0.3"},
+	}
+
+	mal := loadTestState(f)
+
+	if owner := mal.memberGroup[false]["10.0.0.2"]; owner != "cs-unifi-bouncer-ipv4-0" {
+		t.Fatalf("owner = %q, want cs-unifi-bouncer-ipv4-0", owner)
+	}
+	if mal.firewallGroups[false]["cs-unifi-bouncer-ipv4-1"].members["10.0.0.2"] {
+		t.Fatal("duplicate member was not removed from the second group")
+	}
+	if !mal.firewallGroups[false]["cs-unifi-bouncer-ipv4-1"].touched {
+		t.Fatal("group that lost the duplicate should be rewritten")
+	}
+
+	mal.remove(decision("10.0.0.2"))
+	flush(mal, false)
+
+	for name, group := range f.groups {
+		if slices.Contains(group.GroupMembers, "10.0.0.2") {
+			t.Fatalf("address still present in controller group %s", name)
+		}
+	}
+}
+
+// Zone names may contain hyphens. The policy cache must key cleanup by stored
+// metadata rather than by splitting the policy name on "-", otherwise the just
+// created policy is mistaken for an orphan and deleted in the same reconcile.
+func TestHyphenatedZoneNamesKeepPolicy(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		dst  string
+	}{
+		{"hyphenated destination", "External", "DMZ-LAN"},
+		{"hyphenated source", "DMZ-LAN", "Internal"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testSettings(t, 3)
+			unifiZoneSrc = []string{tc.src}
+			unifiZoneDst = []string{tc.dst}
+
+			f := newFakeUnifi()
+			f.zoneBased = true
+			f.zones = []unifi.FirewallZone{
+				{ID: "z-src", Name: tc.src},
+				{ID: "z-dst", Name: tc.dst},
+			}
+			mal := loadTestState(f)
+
+			for _, addr := range addressesFor(3) {
+				mal.add(decision(addr))
+			}
+			flush(mal, false)
+
+			if f.policyCreates != 1 {
+				t.Fatalf("policy creates = %d, want 1", f.policyCreates)
+			}
+			if f.policyDeletes != 0 || len(f.policies) != 1 {
+				t.Fatalf("policy deleted by orphan cleanup: deletes=%d policies=%d", f.policyDeletes, len(f.policies))
+			}
+
+			f.resetCounts()
+			mal.modified = true
+			flush(mal, false)
+
+			if f.policyCreates != 0 || f.policyUpdates != 0 || f.policyDeletes != 0 {
+				t.Fatalf("policy churn on unchanged reconcile: creates=%d updates=%d deletes=%d",
+					f.policyCreates, f.policyUpdates, f.policyDeletes)
+			}
+		})
+	}
+}
+
+// Classic rules cached at startup are obsolete once zone-based mode is enabled;
+// they must not survive the switch.
+func TestClassicRulesRemovedWhenZoneModeEnabled(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	mal := loadTestState(f)
+
+	for _, addr := range addressesFor(3) {
+		mal.add(decision(addr))
+	}
+	flush(mal, false)
+	if f.ruleCreates != 1 {
+		t.Fatalf("setup rule creates = %d, want 1", f.ruleCreates)
+	}
+
+	f.zoneBased = true
+	f.zones = []unifi.FirewallZone{{ID: "z-ext", Name: "External"}, {ID: "z-int", Name: "Internal"}}
+	unifiZoneSrc = []string{"External"}
+	unifiZoneDst = []string{"Internal"}
+	restarted := loadTestState(f)
+
+	f.resetCounts()
+	flush(restarted, false)
+
+	if f.ruleDeletes != 1 {
+		t.Fatalf("classic rule deletes = %d, want 1", f.ruleDeletes)
+	}
+	if len(f.rules) != 0 {
+		t.Fatalf("classic rule still cached: %d", len(f.rules))
+	}
+	if f.policyCreates != 1 {
+		t.Fatalf("zone policy creates = %d, want 1", f.policyCreates)
+	}
+}
+
+// After switching to zone mode, a leftover classic rule still references the
+// group. It must be deleted before the group is removed, not only by the orphan
+// cleanup that runs after the group loop.
+func TestZoneModeDeletesClassicRuleBeforeGroup(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	mal := loadTestState(f)
+
+	addresses := addressesFor(3)
+	for _, addr := range addresses {
+		mal.add(decision(addr))
+	}
+	flush(mal, false)
+
+	f.zoneBased = true
+	f.zones = []unifi.FirewallZone{{ID: "z-ext", Name: "External"}, {ID: "z-int", Name: "Internal"}}
+	unifiZoneSrc = []string{"External"}
+	unifiZoneDst = []string{"Internal"}
+	restarted := loadTestState(f)
+
+	f.resetCounts()
+	for _, addr := range addresses {
+		restarted.remove(decision(addr))
+	}
+	flush(restarted, false)
+
+	if f.ruleDeletes != 1 {
+		t.Fatalf("classic rule deletes = %d, want 1", f.ruleDeletes)
+	}
+	if f.groupDeletes != 1 {
+		t.Fatalf("group deletes = %d, want 1 (rule must be removed first)", f.groupDeletes)
+	}
+	if len(f.groups) != 0 {
+		t.Fatalf("group still present: %d", len(f.groups))
 	}
 }
