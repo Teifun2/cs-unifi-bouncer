@@ -87,11 +87,10 @@ func (mal *unifiAddrList) loadUnifiState(ctx context.Context) {
 	}
 
 	for _, group := range groups {
-		if !strings.Contains(group.Name, "cs-unifi-bouncer") {
+		ipv6, _, ok := parseBouncerName(group.Name)
+		if !ok {
 			continue
 		}
-
-		ipv6 := strings.Contains(group.Name, "ipv6")
 
 		cached := &FirewallGroupCache{
 			id:      group.ID,
@@ -119,11 +118,16 @@ func (mal *unifiAddrList) loadUnifiState(ctx context.Context) {
 	}
 
 	for _, rule := range rules {
-		if strings.Contains(rule.Name, "cs-unifi-bouncer") {
-			ipv6 := strings.Contains(rule.Name, "ipv6")
-
-			mal.firewallRule[ipv6][rule.Name] = FirewallRuleCache{id: rule.ID, groupId: rule.SrcFirewallGroupIDs[0]}
+		ipv6, _, ok := parseBouncerName(rule.Name)
+		if !ok {
+			continue
 		}
+		if len(rule.SrcFirewallGroupIDs) == 0 {
+			log.Warn().Msgf("Ignoring bouncer rule without a source group: %s", rule.Name)
+			continue
+		}
+
+		mal.firewallRule[ipv6][rule.Name] = FirewallRuleCache{id: rule.ID, groupId: rule.SrcFirewallGroupIDs[0]}
 	}
 
 	// Check if firewall policies exists, delete them to start fresh
@@ -183,6 +187,30 @@ func groupIndex(name string) (int, bool) {
 	return index, true
 }
 
+// parseBouncerName parses a canonical bouncer group or rule name of the form
+// cs-unifi-bouncer-<ipv4|ipv6>-<index>. Names that merely contain the string
+// (for example a user rule called "Allow cs-unifi-bouncer monitoring") are
+// rejected, so they are never adopted or deleted as if they belonged to us.
+func parseBouncerName(name string) (ipv6 bool, index int, ok bool) {
+	parts := strings.Split(name, "-")
+	if len(parts) != 5 || parts[0] != "cs" || parts[1] != "unifi" || parts[2] != "bouncer" {
+		return false, 0, false
+	}
+	switch parts[3] {
+	case "ipv4":
+		ipv6 = false
+	case "ipv6":
+		ipv6 = true
+	default:
+		return false, 0, false
+	}
+	index, err := strconv.Atoi(parts[4])
+	if err != nil {
+		return false, 0, false
+	}
+	return ipv6, index, true
+}
+
 func sortedMembers(members map[string]bool) []string {
 	out := make([]string, 0, len(members))
 	for member := range members {
@@ -208,15 +236,30 @@ func (mal *unifiAddrList) groupNamesSorted(ipv6 bool) []string {
 }
 
 // firstNonFullGroup returns the lowest-indexed group that still has room, or ""
-// when every group is full (or none exist).
+// when every group is full (or none exist). It scans once instead of rebuilding
+// and sorting all group names for every inserted address, which matters for
+// large decision batches.
 func (mal *unifiAddrList) firstNonFullGroup(ipv6 bool) string {
-	for _, name := range mal.groupNamesSorted(ipv6) {
-		group := mal.firewallGroups[ipv6][name]
-		if group != nil && len(group.members) < maxGroupSize {
-			return name
+	bestName := ""
+	bestIndex := 0
+	found := false
+
+	for name, group := range mal.firewallGroups[ipv6] {
+		if group == nil || len(group.members) >= maxGroupSize {
+			continue
+		}
+		index, ok := groupIndex(name)
+		if !ok {
+			continue
+		}
+		if !found || index < bestIndex {
+			found = true
+			bestIndex = index
+			bestName = name
 		}
 	}
-	return ""
+
+	return bestName
 }
 
 // newGroupName returns a name for a new group using the lowest free index so
@@ -461,10 +504,14 @@ func (mal *unifiAddrList) deleteOrphanRulesAndPolicies(ctx context.Context, ipv6
 	}
 
 	for ruleName, ruleCache := range mal.firewallRule[ipv6] {
-		index, ok := groupIndex(ruleName)
+		_, index, ok := parseBouncerName(ruleName)
+		if !ok {
+			// Never delete a rule we cannot identify as one of ours.
+			continue
+		}
 		// Classic rules are obsolete in zone-based mode and must not survive a
 		// switch from classic to zone.
-		if !mal.isZoneBased && ok && existing[index] {
+		if !mal.isZoneBased && existing[index] {
 			continue
 		}
 		if err := mal.c.DeleteFirewallRule(ctx, unifiSite, ruleCache.id); err != nil {

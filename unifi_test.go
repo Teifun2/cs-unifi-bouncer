@@ -802,3 +802,73 @@ func TestZoneModeDeletesClassicRuleBeforeGroup(t *testing.T) {
 		t.Fatalf("group still present: %d", len(f.groups))
 	}
 }
+
+// A user rule whose name merely contains "cs-unifi-bouncer" must not be adopted
+// as a bouncer rule, and must never be deleted by the cleanup pass.
+func TestUnrelatedRulesAreNotAdoptedOrDeleted(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	const userName = "Allow cs-unifi-bouncer monitoring"
+	f.rules[userName] = unifi.FirewallRule{
+		ID:                  "user-rule",
+		Name:                userName,
+		SrcFirewallGroupIDs: []string{"user-group"},
+	}
+
+	mal := loadTestState(f)
+	if _, exists := mal.firewallRule[false][userName]; exists {
+		t.Fatal("unrelated user rule was adopted as a bouncer rule")
+	}
+
+	for _, addr := range addressesFor(3) {
+		mal.add(decision(addr))
+	}
+	flush(mal, false)
+
+	if _, exists := f.rules[userName]; !exists {
+		t.Fatal("unrelated user rule was deleted")
+	}
+	if f.ruleDeletes != 0 {
+		t.Fatalf("rule deletes = %d, want 0", f.ruleDeletes)
+	}
+}
+
+// A user group whose name merely contains "cs-unifi-bouncer" must not be
+// adopted as one of the bouncer's own groups.
+func TestUnrelatedGroupsAreNotAdopted(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	f.groups["cs-unifi-bouncer-backup"] = unifi.FirewallGroup{
+		ID:           "user-group",
+		Name:         "cs-unifi-bouncer-backup",
+		GroupType:    "address-group",
+		GroupMembers: []string{"10.0.0.9"},
+	}
+
+	mal := loadTestState(f)
+	if _, exists := mal.firewallGroups[false]["cs-unifi-bouncer-backup"]; exists {
+		t.Fatal("unrelated user group was adopted")
+	}
+}
+
+// The lowest-index non-full group is selected in a single scan, without sorting
+// the group names for every inserted address.
+func TestFirstNonFullGroupScansLowestIndex(t *testing.T) {
+	testSettings(t, 3)
+	mal := &unifiAddrList{
+		firewallGroups: map[bool]map[string]*FirewallGroupCache{false: {}},
+	}
+	mal.firewallGroups[false]["cs-unifi-bouncer-ipv4-0"] = &FirewallGroupCache{
+		members: map[string]bool{"a": true, "b": true, "c": true},
+	}
+	mal.firewallGroups[false]["cs-unifi-bouncer-ipv4-1"] = &FirewallGroupCache{
+		members: map[string]bool{"d": true},
+	}
+	mal.firewallGroups[false]["cs-unifi-bouncer-ipv4-2"] = &FirewallGroupCache{
+		members: map[string]bool{"e": true},
+	}
+
+	if got := mal.firstNonFullGroup(false); got != "cs-unifi-bouncer-ipv4-1" {
+		t.Fatalf("firstNonFullGroup = %q, want cs-unifi-bouncer-ipv4-1", got)
+	}
+}
