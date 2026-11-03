@@ -122,12 +122,15 @@ func (mal *unifiAddrList) loadUnifiState(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		if len(rule.SrcFirewallGroupIDs) == 0 {
-			log.Warn().Msgf("Ignoring bouncer rule without a source group: %s", rule.Name)
-			continue
-		}
 
-		mal.firewallRule[ipv6][rule.Name] = FirewallRuleCache{id: rule.ID, groupId: rule.SrcFirewallGroupIDs[0]}
+		// Cache the rule even when it has no source group, so the normal
+		// update/orphan paths can repair it when its group exists or delete it
+		// when it does not, instead of leaving a malformed rule behind.
+		cached := FirewallRuleCache{id: rule.ID}
+		if len(rule.SrcFirewallGroupIDs) > 0 {
+			cached.groupId = rule.SrcFirewallGroupIDs[0]
+		}
+		mal.firewallRule[ipv6][rule.Name] = cached
 	}
 
 	// Check if firewall policies exists, delete them to start fresh

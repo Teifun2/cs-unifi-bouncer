@@ -872,3 +872,55 @@ func TestFirstNonFullGroupScansLowestIndex(t *testing.T) {
 		t.Fatalf("firstNonFullGroup = %q, want cs-unifi-bouncer-ipv4-1", got)
 	}
 }
+
+// A canonically named rule with no source group must still enter the cache so
+// orphan cleanup can remove it when no group owns its index.
+func TestSourceLessRuleIsDeletedWhenNoGroup(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	f.rules["cs-unifi-bouncer-ipv4-0"] = unifi.FirewallRule{
+		ID:   "rule-orphan",
+		Name: "cs-unifi-bouncer-ipv4-0",
+	}
+
+	mal := loadTestState(f)
+	flush(mal, false)
+
+	if f.ruleDeletes != 1 {
+		t.Fatalf("rule deletes = %d, want 1", f.ruleDeletes)
+	}
+	if _, exists := f.rules["cs-unifi-bouncer-ipv4-0"]; exists {
+		t.Fatal("source-less orphan rule was not deleted")
+	}
+}
+
+// When its group exists, a source-less rule must be repaired in place rather
+// than skipped (which would make reconciliation try to create a second rule).
+func TestSourceLessRuleIsRepairedWhenGroupExists(t *testing.T) {
+	testSettings(t, 3)
+	f := newFakeUnifi()
+	f.groups["cs-unifi-bouncer-ipv4-0"] = unifi.FirewallGroup{
+		ID:           "group-0",
+		Name:         "cs-unifi-bouncer-ipv4-0",
+		GroupType:    "address-group",
+		GroupMembers: []string{"10.0.0.1"},
+	}
+	f.rules["cs-unifi-bouncer-ipv4-0"] = unifi.FirewallRule{
+		ID:   "rule-0",
+		Name: "cs-unifi-bouncer-ipv4-0",
+	}
+
+	mal := loadTestState(f)
+	flush(mal, false)
+
+	if f.ruleCreates != 0 {
+		t.Fatalf("rule creates = %d, want 0 (repair, not create)", f.ruleCreates)
+	}
+	if f.ruleUpdates != 1 {
+		t.Fatalf("rule updates = %d, want 1", f.ruleUpdates)
+	}
+	updated, exists := f.rules["cs-unifi-bouncer-ipv4-0"]
+	if !exists || !slices.Equal(updated.SrcFirewallGroupIDs, []string{"group-0"}) {
+		t.Fatalf("rule was not repaired: %+v", updated)
+	}
+}
