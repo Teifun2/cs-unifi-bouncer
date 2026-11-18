@@ -162,11 +162,7 @@ func main() {
 				mal.decisionProcess(decisions)
 			case <-inactivityTimer.C:
 				// Execute the update to unifi when no new messages have been received
-				mal.updateFirewall(ctx, false)
-				if useIPV6 {
-					mal.updateFirewall(ctx, true)
-				}
-				mal.modified = false
+				mal.reconcile(ctx)
 			case <-cleanupChan:
 				// Periodically clean up audit log entries
 				if unifiLogCleanup {

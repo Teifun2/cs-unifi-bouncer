@@ -339,12 +339,18 @@ func (mal *unifiAddrList) removeMember(ipv6 bool, address string) {
 // repartitioned, so adding or removing one address touches at most the single
 // group it belongs to (plus a create when every group is full, or a delete when
 // a group becomes empty).
-func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
+//
+// It reports whether the controller converged to the cached state. When a
+// write or delete fails it returns false, so the caller keeps the reconcile
+// pending and retries it on the next tick instead of waiting for a new decision.
+func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) bool {
 
 	if !mal.modified {
 		log.Debug().Msg("No changes detected, skipping update")
-		return
+		return true
 	}
+
+	converged := true
 
 	ipVersionString := "ipv4"
 	if ipv6 {
@@ -370,7 +376,9 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 
 		// An emptied group is no longer needed.
 		if len(group.members) == 0 {
-			mal.deleteFirewallGroup(ctx, ipv6, groupName)
+			if !mal.deleteFirewallGroup(ctx, ipv6, groupName) {
+				converged = false
+			}
 			continue
 		}
 
@@ -380,6 +388,7 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 			groupID = mal.postFirewallGroup(ctx, groupID, groupName, ipv6, sortedMembers(group.members))
 			if groupID == "" {
 				// postFirewallGroup already logged the fatal error.
+				converged = false
 				continue
 			}
 			group.id = groupID
@@ -427,16 +436,36 @@ func (mal *unifiAddrList) updateFirewall(ctx context.Context, ipv6 bool) {
 
 	// Remove rules/policies that no longer map to a managed group (e.g. groups
 	// deleted while the bouncer was down, or out-of-scope zones).
-	mal.deleteOrphanRulesAndPolicies(ctx, ipv6)
+	if !mal.deleteOrphanRulesAndPolicies(ctx, ipv6) {
+		converged = false
+	}
+
+	return converged
+}
+
+// reconcile pushes pending changes for every enabled address family. A
+// reconcile that did not fully converge (e.g. a rule/policy delete failed while
+// emptying a group) stays pending, so the next stream tick retries it even when
+// no new decision arrives.
+func (mal *unifiAddrList) reconcile(ctx context.Context) {
+	converged := mal.updateFirewall(ctx, false)
+	if useIPV6 {
+		converged = mal.updateFirewall(ctx, true) && converged
+	}
+	if !converged {
+		log.Warn().Msg("Firewall reconciliation incomplete, retrying on the next update")
+	}
+	mal.modified = !converged
 }
 
 // deleteFirewallGroup removes a group that no longer has any members, along with
 // the rules/policies that referenced it. If the controller delete fails the
-// group is kept so the next reconciliation retries.
-func (mal *unifiAddrList) deleteFirewallGroup(ctx context.Context, ipv6 bool, groupName string) {
+// group is kept so the next reconciliation retries. It reports whether the
+// group is gone.
+func (mal *unifiAddrList) deleteFirewallGroup(ctx context.Context, ipv6 bool, groupName string) bool {
 	group := mal.firewallGroups[ipv6][groupName]
 	if group == nil {
-		return
+		return true
 	}
 
 	index, _ := groupIndex(groupName)
@@ -444,18 +473,19 @@ func (mal *unifiAddrList) deleteFirewallGroup(ctx context.Context, ipv6 bool, gr
 	// remove those first. If that fails, keep the group and retry next reconcile.
 	if !mal.deleteGroupRulesAndPolicies(ctx, ipv6, index) {
 		log.Warn().Msgf("Keeping firewall group %s: its rule/policy could not be deleted", groupName)
-		return
+		return false
 	}
 
 	if group.id != "" {
 		if err := mal.c.DeleteFirewallGroup(ctx, unifiSite, group.id); err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall group: %s", groupName)
-			return
+			return false
 		}
 	}
 
 	log.Info().Msgf("Deleted old firewall group: %s", groupName)
 	delete(mal.firewallGroups[ipv6], groupName)
+	return true
 }
 
 // deleteGroupRulesAndPolicies deletes every rule/policy that belongs to a group
@@ -497,8 +527,10 @@ func (mal *unifiAddrList) deleteGroupRulesAndPolicies(ctx context.Context, ipv6 
 }
 
 // deleteOrphanRulesAndPolicies removes cached rules/policies whose group index no
-// longer exists, or whose zones are out of scope.
-func (mal *unifiAddrList) deleteOrphanRulesAndPolicies(ctx context.Context, ipv6 bool) {
+// longer exists, or whose zones are out of scope. It reports whether every
+// orphan was deleted.
+func (mal *unifiAddrList) deleteOrphanRulesAndPolicies(ctx context.Context, ipv6 bool) bool {
+	allDeleted := true
 	existing := make(map[int]bool, len(mal.firewallGroups[ipv6]))
 	for name := range mal.firewallGroups[ipv6] {
 		if index, ok := groupIndex(name); ok {
@@ -519,6 +551,7 @@ func (mal *unifiAddrList) deleteOrphanRulesAndPolicies(ctx context.Context, ipv6
 		}
 		if err := mal.c.DeleteFirewallRule(ctx, unifiSite, ruleCache.id); err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall rule: %s", ruleName)
+			allDeleted = false
 		} else {
 			log.Info().Msgf("Deleted old firewall rule: %s", ruleName)
 			delete(mal.firewallRule[ipv6], ruleName)
@@ -531,11 +564,14 @@ func (mal *unifiAddrList) deleteOrphanRulesAndPolicies(ctx context.Context, ipv6
 		}
 		if err := mal.c.DeleteFirewallZonePolicy(ctx, unifiSite, policyCache.id); err != nil {
 			log.Error().Err(err).Msgf("Failed to delete old firewall policy: %s", policyName)
+			allDeleted = false
 		} else {
 			log.Info().Msgf("Deleted old firewall policy: %s", policyName)
 			delete(mal.firewallZonePolicy[ipv6], policyName)
 		}
 	}
+
+	return allDeleted
 }
 
 func ipVersionStringFor(ipv6 bool) string {

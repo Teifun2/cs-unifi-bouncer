@@ -245,9 +245,18 @@ func decision(value string) *models.Decision {
 	return &models.Decision{Type: &kind, Value: &value, Origin: &origin, Scenario: &scenario, Duration: &duration, Scope: &scope}
 }
 
+// flush reconciles one address family the way the main loop does: an
+// incomplete reconcile stays pending.
 func flush(mal *unifiAddrList, ipv6 bool) {
-	mal.updateFirewall(context.Background(), ipv6)
-	mal.modified = false
+	mal.modified = !mal.updateFirewall(context.Background(), ipv6)
+}
+
+// emptyStreamTick mirrors one main-loop iteration where CrowdSec returned no
+// new or deleted decisions: the stream is processed, then the inactivity timer
+// fires and the bouncer reconciles.
+func emptyStreamTick(mal *unifiAddrList) {
+	mal.decisionProcess(&models.DecisionsStreamResponse{})
+	mal.reconcile(context.Background())
 }
 
 func groupMembersByName(f *fakeUnifi, name string) []string {
@@ -587,8 +596,7 @@ func TestGroupDeletionWaitsForRuleRemoval(t *testing.T) {
 	}
 
 	f.ruleDeleteErr = nil
-	mal.modified = true
-	flush(mal, false)
+	emptyStreamTick(mal)
 
 	if f.ruleDeletes != 1 || f.groupDeletes != 1 {
 		t.Fatalf("retry deletes rules/groups=%d/%d, want 1/1", f.ruleDeletes, f.groupDeletes)
@@ -631,8 +639,7 @@ func TestGroupDeletionWaitsForPolicyRemoval(t *testing.T) {
 	}
 
 	f.policyDeleteErr = nil
-	mal.modified = true
-	flush(mal, false)
+	emptyStreamTick(mal)
 
 	if f.policyDeletes != 1 || f.groupDeletes != 1 {
 		t.Fatalf("retry deletes policies/groups=%d/%d, want 1/1", f.policyDeletes, f.groupDeletes)
@@ -922,5 +929,80 @@ func TestSourceLessRuleIsRepairedWhenGroupExists(t *testing.T) {
 	updated, exists := f.rules["cs-unifi-bouncer-ipv4-0"]
 	if !exists || !slices.Equal(updated.SrcFirewallGroupIDs, []string{"group-0"}) {
 		t.Fatalf("rule was not repaired: %+v", updated)
+	}
+}
+
+// Regression for a review finding: when the last address of a group expires and
+// the rule/policy delete fails, the controller still blocks that address. The
+// cleanup must stay pending across the main-loop reset and be retried by later
+// empty stream ticks, without any new decision arriving.
+func TestFailedGroupCleanupIsRetriedOnEmptyStream(t *testing.T) {
+	for _, zoneBased := range []bool{false, true} {
+		t.Run(fmt.Sprintf("zoneBased=%t", zoneBased), func(t *testing.T) {
+			testSettings(t, 1)
+			unifiZoneSrc = []string{"External"}
+			unifiZoneDst = []string{"Internal"}
+
+			f := newFakeUnifi()
+			if zoneBased {
+				f.zoneBased = true
+				f.zones = []unifi.FirewallZone{{ID: "z-ext", Name: "External"}, {ID: "z-int", Name: "Internal"}}
+			}
+			mal := loadTestState(f)
+
+			// g0=[A], g1=[B]
+			a, b := "10.0.0.1", "10.0.0.2"
+			mal.decisionProcess(&models.DecisionsStreamResponse{New: []*models.Decision{decision(a), decision(b)}})
+			mal.reconcile(context.Background())
+			if mal.modified {
+				t.Fatal("converged reconcile left the update pending")
+			}
+			if got := groupMembersByName(f, "cs-unifi-bouncer-ipv4-0"); !slices.Equal(got, []string{a}) {
+				t.Fatalf("g0 members = %v, want [%s]", got, a)
+			}
+
+			// A expires while the controller refuses the rule/policy delete.
+			fail := errors.New("controller temporarily unavailable")
+			f.ruleDeleteErr, f.policyDeleteErr = fail, fail
+			mal.decisionProcess(&models.DecisionsStreamResponse{Deleted: []*models.Decision{decision(a)}})
+			mal.reconcile(context.Background())
+			if !mal.modified {
+				t.Fatal("failed cleanup was not kept pending")
+			}
+
+			// Still failing: further empty ticks keep retrying without losing state.
+			emptyStreamTick(mal)
+			if !mal.modified {
+				t.Fatal("failed cleanup dropped after an empty tick")
+			}
+			if got := groupMembersByName(f, "cs-unifi-bouncer-ipv4-0"); !slices.Equal(got, []string{a}) {
+				t.Fatalf("g0 changed while its rule/policy still exists: %v", got)
+			}
+
+			// Controller recovers; only an empty stream response arrives.
+			f.ruleDeleteErr, f.policyDeleteErr = nil, nil
+			emptyStreamTick(mal)
+
+			if mal.modified {
+				t.Fatal("reconcile still pending after the controller recovered")
+			}
+			if _, exists := f.groups["cs-unifi-bouncer-ipv4-0"]; exists {
+				t.Fatal("expired address A is still blocked: g0 remains on the controller")
+			}
+			for _, g := range f.groups {
+				if slices.Contains(g.GroupMembers, a) {
+					t.Fatalf("expired address A still blocked in %s", g.Name)
+				}
+			}
+			if got := groupMembersByName(f, "cs-unifi-bouncer-ipv4-1"); !slices.Equal(got, []string{b}) {
+				t.Fatalf("g1 members = %v, want [%s]", got, b)
+			}
+			if zoneBased && len(f.policies) != 1 {
+				t.Fatalf("policies = %d, want 1 (for g1)", len(f.policies))
+			}
+			if !zoneBased && len(f.rules) != 1 {
+				t.Fatalf("rules = %d, want 1 (for g1)", len(f.rules))
+			}
+		})
 	}
 }
