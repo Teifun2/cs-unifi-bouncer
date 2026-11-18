@@ -64,7 +64,7 @@ func TestBuildMetricsPayloadIsValid(t *testing.T) {
 
 func TestBuildMetricsPayloadWithNoCounts(t *testing.T) {
 	mc := newTestMetricsCollector()
-	mc.mal.blockedAddresses = map[bool]map[string]bool{false: {}, true: {}}
+	mc.mal.memberGroup = map[bool]map[string]string{false: {}, true: {}}
 
 	payload := mc.buildMetricsPayload(1900, &metricCounts{})
 	if err := payload.Validate(strfmt.Default); err != nil {
@@ -268,9 +268,9 @@ func TestBouncerPolicyIPType(t *testing.T) {
 func newTestMetricsCollector() *metricsCollector {
 	return &metricsCollector{
 		mal: &unifiAddrList{
-			blockedAddresses: map[bool]map[string]bool{
-				false: {"203.0.113.10": true, "198.51.100.20": true},
-				true:  {"2001:db8::1": true},
+			memberGroup: map[bool]map[string]string{
+				false: {"203.0.113.10": "group", "198.51.100.20": "group"},
+				true:  {"2001:db8::1": "group"},
 			},
 		},
 		lastPollTime: 1000,

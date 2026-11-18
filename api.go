@@ -97,7 +97,7 @@ func (mal *unifiAddrList) postFirewallRule(ctx context.Context, index int, ID st
 	}
 }
 
-func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, policyName string, ipv6 bool, groupId string, srcZone string, dstZone string) {
+func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, policyName string, ipv6 bool, groupId string, index int, srcZone string, dstZone string) {
 	ipVersion := "IPV4"
 	if ipv6 {
 		ipVersion = "IPV6"
@@ -111,7 +111,7 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 		Enabled:             true,
 		Name:                policyName,
 		ConnectionStateType: "CUSTOM",
-		ConnectionStates:  []string{"NEW", "INVALID"},
+		ConnectionStates:    []string{"NEW", "INVALID"},
 		Protocol:            "all",
 		IPVersion:           ipVersion,
 		Logging:             unifiLogging,
@@ -154,23 +154,31 @@ func (mal *unifiAddrList) postFirewallPolicy(ctx context.Context, ID string, pol
 			firewallZonePolicy = newFirewallZonePolicy
 		}
 		log.Info().Msg("Firewall policy posted")
-		var firewallZonePolicyCache = FirewallZonePolicyCache{id: firewallZonePolicy.ID, groupId: groupId}
+		var firewallZonePolicyCache = FirewallZonePolicyCache{
+			id:      firewallZonePolicy.ID,
+			groupId: groupId,
+			index:   index,
+			zoneSrc: srcZone,
+			zoneDst: dstZone,
+		}
 		mal.firewallZonePolicy[ipv6][firewallZonePolicy.Name] = firewallZonePolicyCache
 	}
 }
 
-// postFirewallGroup creates or updates a firewall group in the UniFi controller.
-// It constructs the group name and type based on the provided parameters and
-// either updates an existing group if an ID is provided or creates a new one.
+// postFirewallGroup creates or updates a firewall group in the UniFi controller
+// and returns its ID. It does not touch the caller's cache: the caller owns the
+// group state (id/members/touched) and is responsible for updating it once the
+// write is acknowledged.
 //
 // Parameters:
 // - ctx: The context for the request.
-// - index: An integer used to generate the group name and differentiate between groups.
-// - ID: The ID of the firewall group to update. If empty, a new group will be created.
-// - ipv6: A boolean indicating whether the group is for IPv6 addresses.
-// - members: A slice of strings representing the members of the firewall group.
+// - ID: The ID of the firewall group to update. If empty, a new group is created.
+// - groupName: The name of the firewall group.
+// - ipv6: Whether the group holds IPv6 addresses.
+// - members: The full membership to write.
 //
-// The function logs a fatal error if the operation fails, otherwise it logs a success message.
+// The function logs a fatal error if the operation fails. An update that the
+// controller answers with ErrNotFound (empty body) is treated as a no-op.
 func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, groupName string, ipv6 bool, members []string) string {
 	groupType := "address-group"
 	if ipv6 {
@@ -178,6 +186,7 @@ func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, grou
 	}
 
 	group := &unifi.FirewallGroup{
+		ID:           ID,
 		Name:         groupName,
 		GroupType:    groupType,
 		GroupMembers: members,
@@ -201,17 +210,15 @@ func (mal *unifiAddrList) postFirewallGroup(ctx context.Context, ID string, grou
 		// If updating and got "not found", it means no changes were needed (UniFi returns empty data)
 		if ID != "" && errors.Is(err, unifi.ErrNotFound) {
 			log.Debug().Msgf("No update needed for firewall group: %s", groupName)
-			mal.firewallGroups[ipv6][group.Name] = group.ID
-			return group.ID
+			return ID
 		}
 		log.Fatal().Err(err).Str("group", groupName).Msg("Failed to post firewall group")
 		return ""
-	} else {
-		if newGroup != nil {
-			group = newGroup
-		}
-		log.Info().Msg("Firewall group posted")
-		mal.firewallGroups[ipv6][group.Name] = group.ID
-		return group.ID
 	}
+
+	if newGroup != nil {
+		group = newGroup
+	}
+	log.Info().Msgf("Firewall group %s posted", groupName)
+	return group.ID
 }
